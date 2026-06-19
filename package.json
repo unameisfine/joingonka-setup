@@ -1,0 +1,53 @@
+{
+  "name": "@joingonka/setup",
+  "version": "0.1.0",
+  "description": "One-command installer that points agentic AI tools (Claude Code, OpenClaw, Cline) at JoinGonka Gateway (decentralized AI inference)",
+  "type": "module",
+  "bin": {
+    "joingonka-setup": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "@inquirer/prompts": "^5.0.0",
+    "write-file-atomic": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/write-file-atomic": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0"
+  },
+  "keywords": [
+    "claude-code",
+    "openclaw",
+    "cline",
+    "anthropic",
+    "openai-compatible",
+    "ai",
+    "gonka",
+    "joingonka",
+    "cli",
+    "installer"
+  ],
+  "author": "JoinGonka <support@joingonka.ai>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/unameisfine/joingonka-setup"
+  }
+}
