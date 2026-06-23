@@ -28,10 +28,13 @@ const program = new Command();
 program
   .name('joingonka-setup')
   .description(
-    'Point an agentic AI tool (Claude Code, OpenClaw, Cline) at JoinGonka Gateway',
+    'Point an agentic AI tool (Claude Code, OpenClaw, Cline, opencode, Aider, Kilo, Roo, Continue) at JoinGonka Gateway',
   )
-  .version('0.1.1')
-  .option('--tool <tool>', 'Tool to configure: claude-code | openclaw | cline')
+  .version('0.2.0')
+  .option(
+    '--tool <tool>',
+    'Tool: claude-code | openclaw | cline | opencode | aider | kilo | roo | continue',
+  )
   .option('--scope <scope>', 'Installation scope: user or local', 'user')
   .option('--model <model>', 'Model id, or "kimi" for Kimi K2.6 (default: Qwen3-235B)')
   .option(

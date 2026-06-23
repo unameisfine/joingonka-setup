@@ -1,6 +1,6 @@
 {
   "name": "@joingonka/setup",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "One-command installer that points agentic AI tools (Claude Code, OpenClaw, Cline) at JoinGonka Gateway (decentralized AI inference)",
   "type": "module",
   "bin": {

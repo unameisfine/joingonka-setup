@@ -9,15 +9,33 @@ import type { Adapter } from './types.js';
 import { claudeCodeAdapter } from './claude-code.js';
 import { openclawAdapter } from './openclaw.js';
 import { clineAdapter } from './cline.js';
+import { opencodeAdapter } from './opencode.js';
+import { aiderAdapter } from './aider.js';
+import { kiloAdapter } from './kilo.js';
+import { rooAdapter } from './roo.js';
+import { continueAdapter } from './continue.js';
 
 /** Идентификаторы поддерживаемых инструментов. */
-export type ToolId = 'claude-code' | 'openclaw' | 'cline';
+export type ToolId =
+  | 'claude-code'
+  | 'openclaw'
+  | 'cline'
+  | 'opencode'
+  | 'aider'
+  | 'kilo'
+  | 'roo'
+  | 'continue';
 
 /** Карта id → адаптер. */
 export const adapters: Record<ToolId, Adapter> = {
   'claude-code': claudeCodeAdapter,
   openclaw: openclawAdapter,
   cline: clineAdapter,
+  opencode: opencodeAdapter,
+  aider: aiderAdapter,
+  kilo: kiloAdapter,
+  roo: rooAdapter,
+  continue: continueAdapter,
 };
 
 /**

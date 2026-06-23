@@ -143,6 +143,73 @@ export function openclawModelEntry(spec: OpenClawModelSpec): Record<string, unkn
   };
 }
 
+// --- opencode (https://opencode.ai) — JSON-конфиг ~/.config/opencode/opencode.json ---
+
+/** Id нашего провайдера в opencode-конфиге (`provider.<id>`). */
+export const OPENCODE_PROVIDER_ID = 'joingonka';
+
+/**
+ * npm-пакет AI SDK для OpenAI-совместимого endpoint на /v1/chat/completions.
+ * opencode подтягивает его в рантайме сам (ручной npm install не нужен).
+ */
+export const OPENCODE_NPM = '@ai-sdk/openai-compatible';
+
+/**
+ * Подстановка ключа из env — синтаксис opencode `{env:VAR}` (НЕ `${VAR}`).
+ * Ключ jg-... в файл не пишется; пользователю — `export GONKA_API_KEY=jg-...`.
+ */
+export const OPENCODE_API_KEY_REF = `{env:${OPENCLAW_API_KEY_ENV}}`;
+
+/** Модель по умолчанию (top-level `model`): `<provider>/<modelId>`. */
+export const OPENCODE_DEFAULT_MODEL = `${OPENCODE_PROVIDER_ID}/moonshotai/Kimi-K2.6`;
+
+/**
+ * Запись модели для opencode: `models: { "<id>": { name, limit:{context,output} } }`.
+ * limit ОБЯЗАТЕЛЕН — без него opencode не знает остаток контекста (compaction off),
+ * а output падает на дефолт. Берём из общего каталога Gonka (OPENCLAW_MODELS).
+ */
+export function opencodeModelEntry(spec: OpenClawModelSpec): Record<string, unknown> {
+  return {
+    name: spec.name,
+    limit: { context: OPENCLAW_CONTEXT_WINDOW, output: spec.maxTokens },
+  };
+}
+
+// --- Aider (https://aider.chat) — env-based, instructions-only ---
+
+/**
+ * Aider маршрутизирует модели через litellm: для OpenAI-совместимого endpoint
+ * имя модели ОБЯЗАНО иметь префикс `openai/` (иначе litellm не поймёт провайдера —
+ * массовая ошибка новичков). Полный id идёт после префикса.
+ */
+export const AIDER_MODEL_PREFIX = 'openai/';
+
+/** Модель Aider по умолчанию (с обязательным префиксом). */
+export const AIDER_DEFAULT_MODEL = `${AIDER_MODEL_PREFIX}moonshotai/Kimi-K2.6`;
+
+// --- Kilo Code (https://kilo.ai) — JSONC ~/.config/kilo/kilo.jsonc (OpenCode-формат) ---
+
+/** Id нашего провайдера в kilo.jsonc (`provider.<id>`). */
+export const KILO_PROVIDER_ID = 'joingonka';
+
+/** Модель по умолчанию (top-level `model`): `<provider>/<modelId>`. */
+export const KILO_DEFAULT_MODEL = `${KILO_PROVIDER_ID}/moonshotai/Kimi-K2.6`;
+
+/**
+ * Запись модели для Kilo: `{ name, tool_call, [reasoning], limit:{context,output} }`.
+ * `tool_call:true` обязателен (Kilo требует нативный tool-calling); `reasoning:true`
+ * для Kimi. `limit` обязателен — иначе Kilo отключает compaction (контекст растёт).
+ */
+export function kiloModelEntry(spec: OpenClawModelSpec): Record<string, unknown> {
+  const entry: Record<string, unknown> = {
+    name: spec.name,
+    tool_call: true,
+    limit: { context: OPENCLAW_CONTEXT_WINDOW, output: spec.maxTokens },
+  };
+  if (spec.id.includes('Kimi')) entry.reasoning = true;
+  return entry;
+}
+
 /**
  * Provider-ref модели (`<provider>/<modelId>`) для agents.defaults.models
  * и primary.
