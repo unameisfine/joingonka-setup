@@ -4,11 +4,18 @@
 
 Поддерживаемые инструменты:
 
-| Инструмент   | Формат               | Куда пишет                                  |
-|--------------|----------------------|---------------------------------------------|
-| Claude Code  | JSON                 | `~/.claude/settings.json` (или local)       |
-| OpenClaw     | YAML                 | `~/.openclaw/config.yaml`                    |
-| Cline        | инструкции (UI)      | ничего не пишет — выводит значения для ввода |
+| Инструмент   | Способ               | Куда                                            |
+|--------------|----------------------|-------------------------------------------------|
+| Claude Code  | JSON                 | `~/.claude/settings.json`                       |
+| OpenClaw     | JSON                 | `~/.openclaw/openclaw.json`                      |
+| opencode     | JSON                 | `~/.config/opencode/opencode.json`              |
+| Kilo Code    | JSON                 | `~/.config/kilo/kilo.jsonc`                      |
+| Aider        | env-переменные       | инструкции (`OPENAI_API_BASE`/`OPENAI_API_KEY`) |
+| Cline        | инструкции (UI)      | выводит значения для ввода в UI                  |
+| Roo Code     | инструкции (UI)      | выводит значения для ввода в UI                  |
+| Continue.dev | инструкции (YAML)    | YAML-блок для `~/.continue/config.yaml`         |
+
+После настройки установщик делает **live-проверку** — реальный запрос к gateway, чтобы убедиться, что ключ, URL и модель приняты (а не «успешно настроено», которое на деле не работает).
 
 ## Использование
 
@@ -28,10 +35,11 @@ JOINGONKA_API_KEY=jg-your-key npx @joingonka/setup --tool openclaw --non-interac
 
 ## Опции
 
-- `--tool <claude-code|openclaw|cline>` — какой инструмент настроить (без флага спросит интерактивно).
+- `--tool <claude-code|openclaw|cline|opencode|aider|kilo|roo|continue>` — какой инструмент настроить (без флага спросит интерактивно).
 - `--scope <user|local>` — глобально (`user`, по умолчанию) или в текущем проекте (`local`).
 - `--model <id|kimi>` — модель: по умолчанию Qwen3-235B, `kimi` → Kimi K2.6, либо явный id модели.
 - `--non-interactive` — без промптов; ключ берётся из `JOINGONKA_API_KEY`.
+- `--no-verify` — пропустить live-проверку после настройки.
 
 ## Где взять ключ
 
