@@ -1,10 +1,15 @@
 /**
  * Адаптер Cline — instructions-only.
  *
- * Cline настраивается через UI расширения VS Code (панель API Configuration),
+ * Cline (VS Code) настраивается через UI расширения (панель API Configuration),
  * а не через файл конфигурации на диске, который мы могли бы безопасно
  * редактировать. Поэтому адаптер ничего не пишет: resolvePath()→null,
  * apply() возвращает wrote:false и готовые значения для ручного ввода.
+ *
+ * NB (2026): у Cline появился отдельный CLI с конфигом
+ * `~/.cline/data/settings/providers.json` и командой `cline auth` — но это CLI,
+ * не VS Code-расширение, и доки рекомендуют `cline auth`, а не запись файла.
+ * Потенциальная отдельная цель (вне scope этого instructions-only адаптера).
  *
  * Значения — для варианта «OpenAI Compatible» (рекомендуемый в knowledge):
  *   API Provider: OpenAI Compatible

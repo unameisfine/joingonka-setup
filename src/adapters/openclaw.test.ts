@@ -4,7 +4,7 @@
  * Реальный OpenClaw использует JSON-конфиг с вложенной структурой
  * models.providers.<id> + agents.defaults. Проверяем:
  * - валидный JSON: провайдер gonka (api openai-completions, baseUrl С /v1,
- *   без поля auth, apiKey = ИМЯ env-переменной), 6 моделей с верными maxTokens;
+ *   без поля auth, apiKey = ИМЯ env-переменной), 3 модели с верными maxTokens;
  * - agents.defaults.model.primary = gonka/moonshotai/Kimi-K2.6, 3 алиаса;
  * - РЕГРЕСС БЕЗОПАСНОСТИ: сам ключ jg-... в файл НЕ попадает, а messages
  *   содержит инструкцию export GONKA_API_KEY;
@@ -110,24 +110,30 @@ describe('openclawAdapter.apply — provider block', () => {
     expect('auth' in provider).toBe(false);
   });
 
-  it('writes apiKey as the ENV VARIABLE NAME, not the secret', async () => {
+  it('writes apiKey as an ${ENV} substitution ref, not the secret or a bare name', async () => {
     await openclawAdapter.apply(input());
     const cfg = readConfig();
-    expect(cfg.models.providers.gonka.apiKey).toBe('GONKA_API_KEY');
+    // OpenClaw резолвит env только для ${VAR}; голое "GONKA_API_KEY" ушло бы
+    // литералом в Authorization → 401. Нужна именно ${...}-форма.
+    expect(cfg.models.providers.gonka.apiKey).toBe('${GONKA_API_KEY}');
   });
 
-  it('writes all 6 models (3 base + 3 :online) with correct maxTokens', async () => {
+  it('writes models.mode = "merge" (сливать наш каталог с бандлами, не заменять)', async () => {
+    await openclawAdapter.apply(input());
+    expect(readConfig().models.mode).toBe('merge');
+  });
+
+  it('writes all 3 Gonka models with correct maxTokens', async () => {
     await openclawAdapter.apply(input());
     const models = readConfig().models.providers.gonka.models as Array<Record<string, any>>;
     const byId = new Map(models.map((m) => [m.id, m]));
 
-    expect(models).toHaveLength(6);
+    expect(models).toHaveLength(3);
+    // :online-вариантов больше нет — веб-поиск в OpenClaw через его tools.web.
+    expect(models.some((m) => String(m.id).endsWith(':online'))).toBe(false);
     expect(byId.get('moonshotai/Kimi-K2.6')?.maxTokens).toBe(3072);
-    expect(byId.get('moonshotai/Kimi-K2.6:online')?.maxTokens).toBe(3072);
     expect(byId.get('Qwen/Qwen3-235B-A22B-Instruct-2507-FP8')?.maxTokens).toBe(8192);
-    expect(byId.get('Qwen/Qwen3-235B-A22B-Instruct-2507-FP8:online')?.maxTokens).toBe(8192);
     expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.maxTokens).toBe(4096);
-    expect(byId.get('MiniMaxAI/MiniMax-M2.7:online')?.maxTokens).toBe(4096);
 
     // Форма записи модели
     const kimi = byId.get('moonshotai/Kimi-K2.6')!;
@@ -272,7 +278,7 @@ describe('openclawAdapter.apply — upsert / idempotency', () => {
     const ids = models.map((m) => m.id);
     const unique = new Set(ids);
     expect(ids).toHaveLength(unique.size);
-    expect(models).toHaveLength(6);
+    expect(models).toHaveLength(3);
   });
 
   it('is byte-identical on a second apply (idempotent)', async () => {

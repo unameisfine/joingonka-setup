@@ -34,6 +34,9 @@ beforeEach(() => {
   process.chdir(tmpDir);
   originalEnvKey = process.env.JOINGONKA_API_KEY;
   delete process.env.JOINGONKA_API_KEY;
+  // verify (по умолчанию вкл.) делает реальный fetch к gate — мокаем, чтобы
+  // тесты оркестрации не ходили в сеть.
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' }));
 });
 
 afterEach(() => {
@@ -44,6 +47,7 @@ afterEach(() => {
   else process.env.JOINGONKA_API_KEY = originalEnvKey;
   rmSync(tmpDir, { recursive: true, force: true });
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 /** Фабрика deps со spy-промптами. */

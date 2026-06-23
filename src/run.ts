@@ -14,6 +14,7 @@ import { DEFAULT_MODEL, KIMI_MODEL } from './constants.js';
 import { validateApiKey } from './core/validate.js';
 import { getAdapter, listTools } from './adapters/registry.js';
 import type { ApplyResult, Scope } from './adapters/types.js';
+import { verifyConfig, type VerifyResult } from './core/verify.js';
 
 /** Опции запуска (из CLI-аргументов). */
 export interface RunOptions {
@@ -25,6 +26,8 @@ export interface RunOptions {
   model?: string;
   /** Неинтерактивный режим: ключ берётся из env, промпты запрещены. */
   nonInteractive?: boolean;
+  /** Live-проверка настройки после записи (реальный запрос к gate). По умолчанию true. */
+  verify?: boolean;
 }
 
 /** Инъектируемые промпты (в проде — реализации из core/prompt.ts). */
@@ -37,6 +40,8 @@ export interface RunDeps {
 export interface RunOutcome {
   toolId: string;
   result: ApplyResult;
+  /** Результат live-проверки (undefined, если verify отключён через --no-verify). */
+  verification?: VerifyResult;
 }
 
 /**
@@ -92,5 +97,17 @@ export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcom
   // 4. Применяем.
   const result = await adapter.apply({ apiKey, model, scope });
 
-  return { toolId: adapter.id, result };
+  // 5. Live-проверка: реальный запрос к gate записанными ключом+моделью —
+  //    подтверждает, что настройка рабочая (ловит мёртвый ключ/URL/модель —
+  //    тот класс молчаливого провала, что дал OpenClaw-баг). По умолчанию вкл.
+  let verification: VerifyResult | undefined;
+  if (options.verify !== false) {
+    verification = await verifyConfig({
+      apiMode: adapter.apiMode ?? 'openai',
+      apiKey,
+      model,
+    });
+  }
+
+  return { toolId: adapter.id, result, verification };
 }
