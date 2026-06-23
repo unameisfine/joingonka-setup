@@ -43,6 +43,13 @@ export interface Adapter {
   readonly format: 'json' | 'yaml' | 'instructions';
 
   /**
+   * Как инструмент обращается к нашему gateway — определяет endpoint live-проверки
+   * (core/verify): 'openai' → /v1/chat/completions (Bearer), 'anthropic' →
+   * /v1/messages (x-api-key, только claude-code). По умолчанию 'openai'.
+   */
+  readonly apiMode?: 'openai' | 'anthropic';
+
+  /**
    * Абсолютный путь к целевому файлу конфига для заданного scope,
    * либо null для instructions-only инструментов (ничего не пишем).
    *

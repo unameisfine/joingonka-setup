@@ -21,6 +21,7 @@ interface CliOptions {
   scope: Scope;
   model?: string;
   nonInteractive?: boolean;
+  verify?: boolean;
 }
 
 const program = new Command();
@@ -29,7 +30,7 @@ program
   .description(
     'Point an agentic AI tool (Claude Code, OpenClaw, Cline) at JoinGonka Gateway',
   )
-  .version('0.1.0')
+  .version('0.1.1')
   .option('--tool <tool>', 'Tool to configure: claude-code | openclaw | cline')
   .option('--scope <scope>', 'Installation scope: user or local', 'user')
   .option('--model <model>', 'Model id, or "kimi" for Kimi K2.6 (default: Qwen3-235B)')
@@ -37,14 +38,16 @@ program
     '--non-interactive',
     'Do not prompt; read the API key from JOINGONKA_API_KEY env var',
   )
+  .option('--no-verify', 'Skip the post-setup live check against the gateway')
   .action(async (opts: CliOptions) => {
     try {
-      const { result } = await run(
+      const { result, verification } = await run(
         {
           tool: opts.tool,
           scope: opts.scope,
           model: opts.model,
           nonInteractive: opts.nonInteractive,
+          verify: opts.verify,
         },
         { askTool, askApiKey },
       );
@@ -56,6 +59,21 @@ program
       }
       if (result.backupPath) {
         console.log(`Backup saved: ${result.backupPath}`);
+      }
+
+      // Результат live-проверки (если не отключена через --no-verify).
+      if (verification) {
+        console.log('');
+        if (verification.ok) {
+          console.log('✓ Verified: the gateway accepted the key, base URL and model.');
+        } else {
+          console.error(`✗ Verification FAILED (${verification.detail}).`);
+          console.error(
+            '  The config was written, but a real request did not succeed — ' +
+              'check the API key, your network, and the model id.',
+          );
+          process.exit(2);
+        }
       }
       process.exit(0);
     } catch (e) {

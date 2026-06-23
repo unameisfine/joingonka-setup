@@ -9,8 +9,8 @@
  *   models.providers.gonka = {
  *     baseUrl: BASE_URL_OPENAI (С /v1 — OpenAI-совместимый клиент),
  *     api: "openai-completions",
- *     apiKey: "GONKA_API_KEY"   // ← ИМЯ env-переменной, НЕ сам секрет
- *     models: [ 6 записей: 3 базовых + 3 :online ]
+ *     apiKey: "${GONKA_API_KEY}" // ← ${env}-ссылка (OpenClaw резолвит ТОЛЬКО ${...})
+ *     models: [ 3 модели Gonka ]
  *   }
  *   (поле `auth` НЕ пишем — как GonkaGate в OpenAI-режиме)
  *   agents.defaults.model.primary = "gonka/moonshotai/Kimi-K2.6" (только если не задан)
@@ -35,6 +35,7 @@ import {
   OPENCLAW_PROVIDER_ID,
   OPENCLAW_PROVIDER_API,
   OPENCLAW_API_KEY_ENV,
+  OPENCLAW_API_KEY_REF,
   OPENCLAW_MODELS,
   OPENCLAW_DEFAULT_PRIMARY,
   openclawModelEntry,
@@ -72,7 +73,7 @@ function asObject(value: unknown): JsonObject | undefined {
  * Строит итоговый конфиг из существующего объекта, не разрушая чужие данные.
  *
  * Шаги:
- *   - upsert наших 6 моделей в существующий models[] провайдера gonka по id;
+ *   - upsert наших 3 моделей в существующий models[] провайдера gonka по id;
  *   - deep-merge провайдера gonka (baseUrl/api/apiKey + смерженный models);
  *   - deep-merge алиасов в agents.defaults.models;
  *   - primary в agents.defaults.model.primary — ТОЛЬКО если ещё не задан.
@@ -94,13 +95,16 @@ function buildConfig(existing: JsonObject): JsonObject {
   // 2. Патч провайдера + агентов (deep-merge сохранит чужие провайдеры/алиасы).
   const patch: JsonObject = {
     models: {
+      // mode:"merge" — слить наш каталог провайдеров с бандл-провайдерами OpenClaw,
+      // а не заменить их (без него мульти-провайдерные сборки рискуют потерять бандлы).
+      mode: 'merge',
       providers: {
         [OPENCLAW_PROVIDER_ID]: {
           baseUrl: BASE_URL_OPENAI,
           api: OPENCLAW_PROVIDER_API,
-          // apiKey = ИМЯ env-переменной (НЕ секрет): см. шапку файла.
-          // Поле `auth` намеренно не пишем (OpenAI-режим, как GonkaGate).
-          apiKey: OPENCLAW_API_KEY_ENV,
+          // apiKey = ${GONKA_API_KEY}-ссылка (НЕ секрет, НЕ голое имя): OpenClaw
+          // резолвит env ТОЛЬКО для ${...}-формы. Поле `auth` не пишем (OpenAI-режим).
+          apiKey: OPENCLAW_API_KEY_REF,
           models,
         },
       },

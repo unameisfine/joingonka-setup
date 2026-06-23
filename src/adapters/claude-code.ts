@@ -72,6 +72,7 @@ export const claudeCodeAdapter: Adapter = {
   id: 'claude-code',
   label: 'Claude Code (Anthropic API)',
   format: 'json',
+  apiMode: 'anthropic', // live-проверка идёт на /v1/messages (x-api-key), не /v1/chat/completions
   resolvePath,
   apply,
 };

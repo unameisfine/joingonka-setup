@@ -47,11 +47,18 @@ export const OPENCLAW_PROVIDER_ID = 'gonka';
 
 /**
  * Имя env-переменной, ИЗ которой OpenClaw читает наш ключ во время работы.
- * В JSON-конфиг пишется именно ЭТА СТРОКА (`"apiKey": "GONKA_API_KEY"`), а НЕ
- * сам секрет jg-... — ключ не должен попадать в файл на диске. Пользователю
- * выдаётся инструкция `export GONKA_API_KEY=jg-...`.
+ * Ключ jg-... не должен попадать в файл на диске — пользователю выдаётся
+ * инструкция `export GONKA_API_KEY=jg-...`.
  */
 export const OPENCLAW_API_KEY_ENV = 'GONKA_API_KEY';
+
+/**
+ * Что РЕАЛЬНО пишется в `apiKey` конфига — `${GONKA_API_KEY}`-ссылка, НЕ голое имя.
+ * OpenClaw подставляет env только для формы `${VAR}`/`$VAR`/известных маркеров
+ * (`models-config.providers.secrets.ts`); голое `GONKA_API_KEY` он бы отправил
+ * ЛИТЕРАЛОМ в `Authorization: Bearer GONKA_API_KEY` → 401. Поэтому ровно `${...}`.
+ */
+export const OPENCLAW_API_KEY_REF = `\${${OPENCLAW_API_KEY_ENV}}`;
 
 /**
  * Транспорт провайдера для OpenClaw. Подключаемся в OpenAI-режиме через наш
@@ -70,16 +77,12 @@ export const OPENCLAW_PROVIDER_API = 'openai-completions';
  *             например `moonshotai/Kimi-K2.6` — НЕ lowercase).
  * name      — человекочитаемое имя в UI выбора модели OpenClaw.
  * maxTokens — потолок выдачи (совпадает с max_output из SSOT).
- * online    — true для `:online`-варианта (веб-поиск через наш плагин).
- * aliasFor  — для базовых моделей: короткий alias в agents.defaults.models.
- *             undefined у `:online`-вариантов (для них alias не заводим).
+ * aliasFor  — короткий alias в agents.defaults.models.
  */
 export interface OpenClawModelSpec {
   id: string;
   name: string;
   maxTokens: number;
-  online: boolean;
-  /** Короткий alias (только для базовых вариантов); undefined для :online. */
   aliasFor?: string;
 }
 
@@ -105,17 +108,16 @@ const OPENCLAW_COST = {
 /**
  * Каталог моделей, которые адаптер прописывает в OpenClaw-провайдер `gonka`.
  *
- * Три базовых модели (с alias) + три `:online`-варианта (веб-поиск). Порядок
- * совпадает с рабочим конфигом оператора: Kimi — первой (она же primary).
+ * Три базовых модели (с alias). Порядок совпадает с рабочим конфигом оператора:
+ * Kimi — первой (она же primary). Веб-поиск в OpenClaw — через его СОБСТВЕННЫЙ
+ * встроенный tools.web (client-side); серверный web_search gateway активируется
+ * per-request (plugins mode:'agent') и здесь модель-варианты не нужны.
  * SSOT по id/maxTokens — gateway/src/modules/network-status/model-specs.ts.
  */
 export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
-  { id: 'moonshotai/Kimi-K2.6', name: 'Kimi K2.6 (Gonka)', maxTokens: 3072, online: false, aliasFor: 'kimi-k2.6' },
-  { id: 'moonshotai/Kimi-K2.6:online', name: 'Kimi K2.6 + web (Gonka)', maxTokens: 3072, online: true },
-  { id: 'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8', name: 'Qwen3-235B-A22B (Gonka)', maxTokens: 8192, online: false, aliasFor: 'qwen3-235b' },
-  { id: 'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8:online', name: 'Qwen3-235B-A22B + web (Gonka)', maxTokens: 8192, online: true },
-  { id: 'MiniMaxAI/MiniMax-M2.7', name: 'MiniMax M2.7 (Gonka)', maxTokens: 4096, online: false, aliasFor: 'minimax-m2.7' },
-  { id: 'MiniMaxAI/MiniMax-M2.7:online', name: 'MiniMax M2.7 + web (Gonka)', maxTokens: 4096, online: true },
+  { id: 'moonshotai/Kimi-K2.6', name: 'Kimi K2.6 (Gonka)', maxTokens: 3072, aliasFor: 'kimi-k2.6' },
+  { id: 'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8', name: 'Qwen3-235B-A22B (Gonka)', maxTokens: 8192, aliasFor: 'qwen3-235b' },
+  { id: 'MiniMaxAI/MiniMax-M2.7', name: 'MiniMax M2.7 (Gonka)', maxTokens: 4096, aliasFor: 'minimax-m2.7' },
 ];
 
 /**
@@ -143,7 +145,7 @@ export function openclawModelEntry(spec: OpenClawModelSpec): Record<string, unkn
 
 /**
  * Provider-ref модели (`<provider>/<modelId>`) для agents.defaults.models
- * и primary. Применяется к базовому id (без суффикса `:online`).
+ * и primary.
  */
 export function openclawModelRef(modelId: string): string {
   return `${OPENCLAW_PROVIDER_ID}/${modelId}`;
