@@ -143,7 +143,7 @@ export function openclawModelEntry(spec: OpenClawModelSpec): Record<string, unkn
   };
 }
 
-// --- opencode (https://opencode.ai) — JSON-конфиг ~/.config/opencode/opencode.json ---
+// --- opencode (https://opencode.ai) — opencode.json (провайдер) + auth.json (ключ, нативно) ---
 
 /** Id нашего провайдера в opencode-конфиге (`provider.<id>`). */
 export const OPENCODE_PROVIDER_ID = 'joingonka';
@@ -155,8 +155,10 @@ export const OPENCODE_PROVIDER_ID = 'joingonka';
 export const OPENCODE_NPM = '@ai-sdk/openai-compatible';
 
 /**
- * Подстановка ключа из env — синтаксис opencode `{env:VAR}` (НЕ `${VAR}`).
- * Ключ jg-... в файл не пишется; пользователю — `export GONKA_API_KEY=jg-...`.
+ * Ref-подстановка ключа из env синтаксисом `{env:VAR}` (НЕ `${VAR}`).
+ * ⚠️ opencode БОЛЬШЕ НЕ использует env — он пишет ключ нативно в
+ * ~/.local/share/opencode/auth.json (см. adapters/opencode.ts). Эта константа
+ * осталась для адаптера kilo (имя историческое).
  */
 export const OPENCODE_API_KEY_REF = `{env:${OPENCLAW_API_KEY_ENV}}`;
 

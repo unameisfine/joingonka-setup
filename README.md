@@ -26,7 +26,7 @@ That's it. The installer asks which tool to set up and for your API key (`jg-...
 |--------------|-------------------|-------------------------------------------------|
 | Claude Code  | JSON              | `~/.claude/settings.json`                       |
 | OpenClaw     | JSON              | `~/.openclaw/openclaw.json`                     |
-| opencode     | JSON              | `~/.config/opencode/opencode.json`              |
+| opencode     | JSON              | `opencode.json` + key in native `auth.json`     |
 | Kilo Code    | JSON              | `~/.config/kilo/kilo.jsonc`                     |
 | Aider        | env variables     | prints `OPENAI_API_BASE` / `OPENAI_API_KEY`     |
 | Cline        | instructions (UI) | prints the values to enter in the UI            |
