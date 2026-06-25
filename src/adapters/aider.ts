@@ -1,18 +1,22 @@
 /**
  * Адаптер Aider (https://aider.chat) — instructions-only (env-based).
  *
- * Aider читает OpenAI-совместимый endpoint из env-переменных
- * (OPENAI_API_BASE / OPENAI_API_KEY) и принимает модель флагом --model.
- * Конфиг-файлы (.env / .aider.conf.yml) тоже работают, но самый чистый и
- * безопасный путь — env-переменные: ключ не оседает в файле на диске.
+ * Aider читает OpenAI-совместимый endpoint из env (OPENAI_API_BASE / OPENAI_API_KEY —
+ * имя именно _API_BASE, НЕ _BASE_URL) и принимает модель флагом --model.
  *
- * Поэтому адаптер ничего не пишет, а возвращает готовые команды:
+ * Адаптер ничего не пишет, а возвращает готовые команды для разовой сессии:
  *   export OPENAI_API_BASE=https://gate.joingonka.ai/v1
  *   export OPENAI_API_KEY=jg-...
  *   aider --model openai/moonshotai/Kimi-K2.6
  *
  * ⚠️ Имя модели — С префиксом `openai/` (litellm-маршрутизация на OpenAI-
  *   совместимого провайдера; без него Aider не поймёт endpoint).
+ *
+ * ⚠️ ПЕРСИСТЕНТНОСТЬ: глобальный `export OPENAI_*` в ~/.bashrc/~/.zshrc
+ *   перехватывает ВСЕ OpenAI-совместимые инструменты пользователя. Поэтому для
+ *   постоянной настройки рекомендуем per-project `.aider.conf.yml` (поля
+ *   openai-api-base/openai-api-key/model — endpoint+ключ+модель в одном файле,
+ *   глобальный env не трогается). Aider грузит его из home/git-root/cwd.
  */
 import { BASE_URL_OPENAI, AIDER_MODEL_PREFIX } from '../constants.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
@@ -29,15 +33,21 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     backupPath: null,
     wrote: false,
     messages: [
-      'Aider is configured via environment variables (no file is written).',
-      'Run these in your shell, then start Aider:',
+      'Aider takes the endpoint + key from env vars or a config file (nothing is written for you).',
+      'Quickest — set them for the current shell, then start Aider:',
       '',
       `  export OPENAI_API_BASE=${BASE_URL_OPENAI}`,
       `  export OPENAI_API_KEY=${input.apiKey}`,
       `  aider --model ${model}`,
       '',
       'The model name MUST keep the "openai/" prefix (litellm routing).',
-      'To persist, add the two export lines to your ~/.bashrc or ~/.zshrc.',
+      '',
+      'To persist WITHOUT touching global env (recommended — a global export of',
+      'OPENAI_* in ~/.bashrc would hijack your other OpenAI-compatible tools),',
+      'put a .aider.conf.yml in your project root instead:',
+      `  openai-api-base: ${BASE_URL_OPENAI}`,
+      `  openai-api-key: ${input.apiKey}`,
+      `  model: ${model}`,
     ],
   };
 }
