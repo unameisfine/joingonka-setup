@@ -1,7 +1,9 @@
 /**
- * Контракт-тесты opencode-адаптера: формат провайдера сверяется с реальным
- * opencode-конфигом (research 2026) — npm-адаптер, baseURL с /v1, ключ как
- * {env:...} (не литерал), limit обязателен, merge-aware.
+ * Контракт-тесты opencode-адаптера: формат сверяется с реальным opencode
+ * (docs/providers 2026). Нативная настройка БЕЗ env — два файла:
+ *   - opencode.json: npm-адаптер, baseURL с /v1, limit обязателен, БЕЗ apiKey;
+ *   - auth.json: ключ под provider-id в формате { type:"api", key } —
+ *     то, что пишет `opencode auth login` → Other. Оба merge-aware.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -11,18 +13,25 @@ import { opencodeAdapter } from './opencode.js';
 
 let tmpDir: string;
 let configPath: string;
-let originalEnv: string | undefined;
+let authPath: string;
+let origConfigEnv: string | undefined;
+let origAuthEnv: string | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'joingonka-opencode-'));
   configPath = join(tmpDir, 'opencode.json');
-  originalEnv = process.env.OPENCODE_CONFIG;
+  authPath = join(tmpDir, 'auth.json');
+  origConfigEnv = process.env.OPENCODE_CONFIG;
+  origAuthEnv = process.env.OPENCODE_AUTH_JSON;
   process.env.OPENCODE_CONFIG = configPath;
+  process.env.OPENCODE_AUTH_JSON = authPath;
 });
 
 afterEach(() => {
-  if (originalEnv === undefined) delete process.env.OPENCODE_CONFIG;
-  else process.env.OPENCODE_CONFIG = originalEnv;
+  if (origConfigEnv === undefined) delete process.env.OPENCODE_CONFIG;
+  else process.env.OPENCODE_CONFIG = origConfigEnv;
+  if (origAuthEnv === undefined) delete process.env.OPENCODE_AUTH_JSON;
+  else process.env.OPENCODE_AUTH_JSON = origAuthEnv;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -31,6 +40,9 @@ function input(overrides?: Partial<{ apiKey: string; model: string }>) {
 }
 function readConfig(): any {
   return JSON.parse(readFileSync(configPath, 'utf-8'));
+}
+function readAuth(): any {
+  return JSON.parse(readFileSync(authPath, 'utf-8'));
 }
 
 describe('opencodeAdapter.resolvePath', () => {
@@ -44,7 +56,7 @@ describe('opencodeAdapter.resolvePath', () => {
   });
 });
 
-describe('opencodeAdapter.apply — provider block', () => {
+describe('opencodeAdapter.apply — provider block (opencode.json)', () => {
   it('writes provider.joingonka with @ai-sdk/openai-compatible + baseURL WITH /v1', async () => {
     await opencodeAdapter.apply(input());
     const p = readConfig().provider.joingonka;
@@ -52,9 +64,10 @@ describe('opencodeAdapter.apply — provider block', () => {
     expect(p.options.baseURL).toBe('https://gate.joingonka.ai/v1');
   });
 
-  it('writes apiKey as {env:GONKA_API_KEY} ref, not the secret or bare name', async () => {
+  it('does NOT put apiKey in opencode.json (key lives in auth.json, not config)', async () => {
     await opencodeAdapter.apply(input());
-    expect(readConfig().provider.joingonka.options.apiKey).toBe('{env:GONKA_API_KEY}');
+    const p = readConfig().provider.joingonka;
+    expect(p.options.apiKey).toBeUndefined();
     expect(JSON.stringify(readConfig()).includes('jg-test123')).toBe(false);
   });
 
@@ -74,8 +87,21 @@ describe('opencodeAdapter.apply — provider block', () => {
   });
 });
 
+describe('opencodeAdapter.apply — credential store (auth.json)', () => {
+  it('stores the key under provider-id with type:api (opencode native format)', async () => {
+    await opencodeAdapter.apply(input());
+    expect(readAuth().joingonka).toEqual({ type: 'api', key: 'jg-test123' });
+  });
+
+  it('provider-id in auth.json matches provider-id in opencode.json', async () => {
+    await opencodeAdapter.apply(input());
+    expect(Object.keys(readAuth())).toContain('joingonka');
+    expect(readConfig().provider.joingonka).toBeTruthy();
+  });
+});
+
 describe('opencodeAdapter.apply — merge-aware', () => {
-  it('preserves a foreign provider and user top-level model', async () => {
+  it('preserves a foreign provider and user top-level model in opencode.json', async () => {
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,
@@ -86,5 +112,14 @@ describe('opencodeAdapter.apply — merge-aware', () => {
     expect(cfg.provider.anthropic).toBeTruthy(); // чужой провайдер цел
     expect(cfg.provider.joingonka).toBeTruthy(); // наш добавлен
     expect(cfg.model).toBe('anthropic/claude-x'); // пользовательский model не перезаписан
+  });
+
+  it('preserves foreign credentials in auth.json', async () => {
+    mkdirSync(dirname(authPath), { recursive: true });
+    writeFileSync(authPath, JSON.stringify({ openai: { type: 'api', key: 'sk-foreign' } }));
+    await opencodeAdapter.apply(input());
+    const auth = readAuth();
+    expect(auth.openai).toEqual({ type: 'api', key: 'sk-foreign' }); // чужой ключ цел
+    expect(auth.joingonka).toEqual({ type: 'api', key: 'jg-test123' }); // наш добавлен
   });
 });
