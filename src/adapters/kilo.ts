@@ -12,6 +12,14 @@
  *
  * Пишем чистый JSON в .jsonc-файл (JSON ⊂ JSONC, Kilo прочитает). Ключ jg-... в
  * файл НЕ пишется (`{env:GONKA_API_KEY}`). Слияние не разрушает чужие данные.
+ *
+ * Достоверность сверена с исходником Kilo (packages/opencode/src/config/config.ts,
+ * 2026-06-25): глобальный loader ищет ["kilo.jsonc","kilo.json","opencode.jsonc",
+ * "opencode.json","config.json"] в ~/.config/kilo/ — kilo.jsonc первый/дефолтный;
+ * синтаксис {env:VAR} официально поддержан (пример {env:ANTHROPIC_API_KEY} в CLI-доке);
+ * $schema https://app.kilo.ai/config.json штампуется loader'ом. GONKA_API_KEY —
+ * УНИКАЛЬНОЕ имя (не общие OPENAI_ или ANTHROPIC_), соседние инструменты не трогает.
+ * Нативная альтернатива env — store Kilo (`kilo auth login`, форк opencode-auth).
  */
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -101,10 +109,15 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       `Base URL: ${BASE_URL_OPENAI}`,
       `Default model: ${KILO_DEFAULT_MODEL}`,
       '',
-      'Your API key is read from an environment variable (not stored in the config).',
-      `Set it in your shell, then restart Kilo:`,
-      `  export GONKA_API_KEY=${input.apiKey}`,
-      `To persist it, add that line to your ~/.bashrc or ~/.zshrc.`,
+      // Ключ не в конфиге: kilo.jsonc ссылается на ИЗОЛИРОВАННУЮ переменную
+      // GONKA_API_KEY через родной для Kilo синтаксис {env:...}. Имя уникально и
+      // НЕ пересекается с общими OPENAI_*/ANTHROPIC_*, поэтому прочие инструменты
+      // пользователя не затрагиваются. Дальше — на выбор: env или нативный store.
+      "The config references an isolated env var GONKA_API_KEY (Kilo's native {env:} syntax),",
+      'so your other OpenAI/Anthropic tools are left untouched. Provide the key either way:',
+      `  - this shell session:  export GONKA_API_KEY=${input.apiKey}`,
+      "  - or Kilo's own credential store (no env):  kilo auth login",
+      'Then restart Kilo to pick up the provider.',
     ],
   };
 }

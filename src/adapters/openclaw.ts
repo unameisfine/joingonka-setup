@@ -173,10 +173,13 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       `Base URL: ${BASE_URL_OPENAI}`,
       `Default model: ${OPENCLAW_DEFAULT_PRIMARY}`,
       '',
-      'Your API key is read from an environment variable (not stored in the config).',
-      `Set it in your shell, then restart OpenClaw:`,
+      // Ключ в файл НЕ пишется: openclaw.json ссылается на ${GONKA_API_KEY}
+      // (OpenClaw резолвит только ${...}). Имя уникальное, не пересекается с общими
+      // OPENAI_ или ANTHROPIC_ — соседние инструменты пользователя не затрагиваются.
+      `The config references the isolated env var ${OPENCLAW_API_KEY_ENV} (OpenClaw resolves \${...} only),`,
+      'so your other OpenAI-compatible tools are left untouched. Provide the key in your shell:',
       `  export ${OPENCLAW_API_KEY_ENV}=${input.apiKey}`,
-      `To persist it, add that line to your ~/.bashrc or ~/.zshrc.`,
+      'Then restart OpenClaw.',
     ],
   };
 }

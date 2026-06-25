@@ -1,10 +1,11 @@
 /**
  * Адаптер Cline — instructions-only.
  *
- * Cline (VS Code) настраивается через UI расширения (панель API Configuration),
+ * Cline (VS Code) настраивается через UI расширения (Settings по иконке-шестерёнке),
  * а не через файл конфигурации на диске, который мы могли бы безопасно
- * редактировать. Поэтому адаптер ничего не пишет: resolvePath()→null,
- * apply() возвращает wrote:false и готовые значения для ручного ввода.
+ * редактировать (ключи лежат в VS Code SecretStorage / OS keychain). Поэтому
+ * адаптер ничего не пишет: resolvePath()→null, apply() возвращает wrote:false
+ * и готовые значения для ручного ввода.
  *
  * NB (2026): у Cline появился отдельный CLI с конфигом
  * `~/.cline/data/settings/providers.json` и командой `cline auth` — но это CLI,
@@ -32,12 +33,12 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     wrote: false,
     messages: [
       'Cline is configured in the VS Code extension UI (no file is written).',
-      'Open the Cline panel → Settings (gear) → API Configuration and set:',
+      'Open the Cline panel → Settings (gear icon) and set:',
       '  API Provider: OpenAI Compatible',
       `  Base URL:     ${BASE_URL_OPENAI}`,
       `  API Key:      ${input.apiKey}`,
       `  Model ID:     ${input.model}`,
-      'Then click "Test connection" — it should pass in 1-3 seconds.',
+      'Then click "Verify" to confirm the connection.',
     ],
   };
 }
