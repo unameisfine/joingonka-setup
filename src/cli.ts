@@ -36,7 +36,7 @@ program
     'Tool: claude-code | openclaw | cline | opencode | aider | kilo | roo | continue',
   )
   .option('--scope <scope>', 'Installation scope: user or local', 'user')
-  .option('--model <model>', 'Model id, or "kimi" for Kimi K2.6 (default: Qwen3-235B)')
+  .option('--model <model>', 'Model id, or "kimi" for Kimi K2.6 (default: MiniMax-M2.7)')
   .option(
     '--non-interactive',
     'Do not prompt; read the API key from JOINGONKA_API_KEY env var',

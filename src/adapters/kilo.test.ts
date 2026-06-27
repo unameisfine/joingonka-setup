@@ -40,7 +40,7 @@ describe('kiloAdapter.apply', () => {
     expect(models['moonshotai/Kimi-K2.6'].tool_call).toBe(true);
     expect(models['moonshotai/Kimi-K2.6'].reasoning).toBe(true);
     expect(models['moonshotai/Kimi-K2.6'].limit.output).toBe(3072);
-    expect(models['Qwen/Qwen3-235B-A22B-Instruct-2507-FP8'].reasoning).toBeUndefined();
+    expect(models['MiniMaxAI/MiniMax-M2.7'].reasoning).toBeUndefined();
   });
 
   it('sets kilo $schema and default model when absent', async () => {

@@ -71,11 +71,11 @@ describe('opencodeAdapter.apply — provider block (opencode.json)', () => {
     expect(JSON.stringify(readConfig()).includes('jg-test123')).toBe(false);
   });
 
-  it('writes models with limit.output matching SSOT caps (Kimi 3072, Qwen 8192)', async () => {
+  it('writes models with limit.output matching SSOT caps (Kimi 3072, MiniMax 4096)', async () => {
     await opencodeAdapter.apply(input());
     const models = readConfig().provider.joingonka.models;
     expect(models['moonshotai/Kimi-K2.6'].limit.output).toBe(3072);
-    expect(models['Qwen/Qwen3-235B-A22B-Instruct-2507-FP8'].limit.output).toBe(8192);
+    expect(models['MiniMaxAI/MiniMax-M2.7'].limit.output).toBe(4096);
     expect(models['moonshotai/Kimi-K2.6'].limit.context).toBeGreaterThan(0);
   });
 

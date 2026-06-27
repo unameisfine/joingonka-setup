@@ -14,7 +14,7 @@
  * NB: у Roo есть авто-импорт через VS Code setting `roo-cline.autoImportSettingsPath`
  * + JSON-профиль, но он требует записать jg-ключ в файл на диск — мы этого избегаем
  * (instructions-only безопаснее). Roo требует НАТИВНЫЙ tool-calling у модели (есть
- * у наших Kimi/Qwen).
+ * у наших Kimi/MiniMax).
  */
 import { BASE_URL_OPENAI } from '../constants.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
@@ -37,7 +37,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       `  API Key:      ${input.apiKey}`,
       `  Model:        ${input.model}`,
       '',
-      'Roo needs native tool-calling — our Kimi/Qwen models support it.',
+      'Roo needs native tool-calling — our Kimi/MiniMax models support it.',
     ],
   };
 }
