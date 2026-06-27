@@ -145,7 +145,7 @@ describe('run — model selection', () => {
       deps,
     );
     expect(result.result.messages.join('\n')).toContain(
-      'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8',
+      'MiniMaxAI/MiniMax-M2.7',
     );
   });
 

@@ -17,13 +17,13 @@ describe('verifyConfig — OpenAI-режим', () => {
   it('POST на /v1/chat/completions с Bearer-ключом и точной моделью', async () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse());
     vi.stubGlobal('fetch', fetchMock);
-    const r = await verifyConfig({ apiMode: 'openai', apiKey: 'jg-x', model: 'Qwen/Q' });
+    const r = await verifyConfig({ apiMode: 'openai', apiKey: 'jg-x', model: 'MiniMaxAI/M' });
     expect(r.ok).toBe(true);
     expect(r.status).toBe(200);
     const [url, opts] = fetchMock.mock.calls[0];
     expect(url).toBe('https://gate.joingonka.ai/v1/chat/completions');
     expect(opts.headers.authorization).toBe('Bearer jg-x');
-    expect(JSON.parse(opts.body).model).toBe('Qwen/Q');
+    expect(JSON.parse(opts.body).model).toBe('MiniMaxAI/M');
   });
 });
 

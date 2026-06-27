@@ -123,16 +123,15 @@ describe('openclawAdapter.apply — provider block', () => {
     expect(readConfig().models.mode).toBe('merge');
   });
 
-  it('writes all 3 Gonka models with correct maxTokens', async () => {
+  it('writes both Gonka models with correct maxTokens', async () => {
     await openclawAdapter.apply(input());
     const models = readConfig().models.providers.gonka.models as Array<Record<string, any>>;
     const byId = new Map(models.map((m) => [m.id, m]));
 
-    expect(models).toHaveLength(3);
+    expect(models).toHaveLength(2);
     // :online-вариантов больше нет — веб-поиск в OpenClaw через его tools.web.
     expect(models.some((m) => String(m.id).endsWith(':online'))).toBe(false);
     expect(byId.get('moonshotai/Kimi-K2.6')?.maxTokens).toBe(3072);
-    expect(byId.get('Qwen/Qwen3-235B-A22B-Instruct-2507-FP8')?.maxTokens).toBe(8192);
     expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.maxTokens).toBe(4096);
 
     // Форма записи модели
@@ -152,15 +151,12 @@ describe('openclawAdapter.apply — provider block', () => {
 });
 
 describe('openclawAdapter.apply — agents defaults', () => {
-  it('sets primary to gonka/moonshotai/Kimi-K2.6 and registers 3 aliases', async () => {
+  it('sets primary to gonka/moonshotai/Kimi-K2.6 and registers 2 aliases', async () => {
     await openclawAdapter.apply(input());
     const defaults = readConfig().agents.defaults;
 
     expect(defaults.model.primary).toBe('gonka/moonshotai/Kimi-K2.6');
     expect(defaults.models['gonka/moonshotai/Kimi-K2.6']).toEqual({ alias: 'kimi-k2.6' });
-    expect(defaults.models['gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toEqual({
-      alias: 'qwen3-235b',
-    });
     expect(defaults.models['gonka/MiniMaxAI/MiniMax-M2.7']).toEqual({ alias: 'minimax-m2.7' });
   });
 });
@@ -278,7 +274,7 @@ describe('openclawAdapter.apply — upsert / idempotency', () => {
     const ids = models.map((m) => m.id);
     const unique = new Set(ids);
     expect(ids).toHaveLength(unique.size);
-    expect(models).toHaveLength(3);
+    expect(models).toHaveLength(2);
   });
 
   it('is byte-identical on a second apply (idempotent)', async () => {

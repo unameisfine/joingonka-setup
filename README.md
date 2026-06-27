@@ -5,7 +5,7 @@
 
 **One command to point your AI coding agent at the cheapest decentralized AI API.**
 
-`@joingonka/setup` configures eight agentic AI tools — Claude Code, OpenClaw, Cline, opencode, Aider, Kilo Code, Roo Code, and Continue — to run on [JoinGonka Gateway](https://gate.joingonka.ai), an OpenAI- and Anthropic-compatible gateway for the decentralized [Gonka Network](https://gonka.ai). Inference runs on the network's own GPUs instead of a centralized provider, so flagship open models (Qwen3-235B, Kimi K2.6, MiniMax M2.7) cost roughly **100x less** than the usual cloud AI APIs — a genuinely cheap, affordable AI API for coding agents, with no metered per-seat subscription.
+`@joingonka/setup` configures eight agentic AI tools — Claude Code, OpenClaw, Cline, opencode, Aider, Kilo Code, Roo Code, and Continue — to run on [JoinGonka Gateway](https://gate.joingonka.ai), an OpenAI- and Anthropic-compatible gateway for the decentralized [Gonka Network](https://gonka.ai). Inference runs on the network's own GPUs instead of a centralized provider, so flagship open models (Kimi K2.6, MiniMax M2.7) cost roughly **100x less** than the usual cloud AI APIs — a genuinely cheap, affordable AI API for coding agents, with no metered per-seat subscription.
 
 ```bash
 npx @joingonka/setup
@@ -55,7 +55,7 @@ JOINGONKA_API_KEY=jg-your-key npx @joingonka/setup --tool openclaw --non-interac
 
 - `--tool <claude-code|openclaw|cline|opencode|aider|kilo|roo|continue>` — which tool to configure (omit to choose interactively).
 - `--scope <user|local>` — globally (`user`, default) or in the current project (`local`).
-- `--model <id|kimi>` — model: defaults to Qwen3-235B, `kimi` selects Kimi K2.6, or pass an explicit model id.
+- `--model <id|kimi>` — model: defaults to MiniMax-M2.7, `kimi` selects Kimi K2.6, or pass an explicit model id.
 - `--non-interactive` — no prompts; the key is taken from `JOINGONKA_API_KEY`.
 - `--no-verify` — skip the live check after configuration.
 

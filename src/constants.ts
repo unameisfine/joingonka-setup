@@ -23,10 +23,10 @@ export const BASE_URL = 'https://gate.joingonka.ai';
 export const BASE_URL_OPENAI = 'https://gate.joingonka.ai/v1';
 
 /**
- * Модель по умолчанию — Qwen3-235B. Сильная для всего агентного пайплайна,
- * нативный tool calling. Совпадает с примерами в knowledge-статьях.
+ * Модель по умолчанию — MiniMax-M2.7. Активна в сети (operational),
+ * нативный tool calling, сильная на агентных задачах.
  */
-export const DEFAULT_MODEL = 'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8';
+export const DEFAULT_MODEL = 'MiniMaxAI/MiniMax-M2.7';
 
 /**
  * Альтернативная модель Kimi K2.6 — длинный контекст.
@@ -108,7 +108,7 @@ const OPENCLAW_COST = {
 /**
  * Каталог моделей, которые адаптер прописывает в OpenClaw-провайдер `gonka`.
  *
- * Три базовых модели (с alias). Порядок совпадает с рабочим конфигом оператора:
+ * Базовые модели (с alias). Порядок совпадает с рабочим конфигом оператора:
  * Kimi — первой (она же primary). Веб-поиск в OpenClaw — через его СОБСТВЕННЫЙ
  * встроенный tools.web (client-side); серверный web_search gateway активируется
  * per-request (plugins mode:'agent') и здесь модель-варианты не нужны.
@@ -116,7 +116,6 @@ const OPENCLAW_COST = {
  */
 export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
   { id: 'moonshotai/Kimi-K2.6', name: 'Kimi K2.6 (Gonka)', maxTokens: 3072, aliasFor: 'kimi-k2.6' },
-  { id: 'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8', name: 'Qwen3-235B-A22B (Gonka)', maxTokens: 8192, aliasFor: 'qwen3-235b' },
   { id: 'MiniMaxAI/MiniMax-M2.7', name: 'MiniMax M2.7 (Gonka)', maxTokens: 4096, aliasFor: 'minimax-m2.7' },
 ];
 
