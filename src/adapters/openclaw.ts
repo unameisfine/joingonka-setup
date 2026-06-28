@@ -10,11 +10,11 @@
  *     baseUrl: BASE_URL_OPENAI (С /v1 — OpenAI-совместимый клиент),
  *     api: "openai-completions",
  *     apiKey: "${GONKA_API_KEY}" // ← ${env}-ссылка (OpenClaw резолвит ТОЛЬКО ${...})
- *     models: [ 3 модели Gonka ]
+ *     models: [ актуальные модели каталога Gonka ]
  *   }
  *   (поле `auth` НЕ пишем — как GonkaGate в OpenAI-режиме)
  *   agents.defaults.model.primary = "gonka/moonshotai/Kimi-K2.6" (только если не задан)
- *   agents.defaults.models[<ref>] = { alias } для трёх базовых моделей
+ *   agents.defaults.models[<ref>] = { alias } для моделей каталога
  *
  * ⚠️ Безопасность: реальный ключ jg-... в файл НЕ пишется. В конфиг идёт лишь
  *   ИМЯ переменной окружения (GONKA_API_KEY), а пользователю возвращается
@@ -42,11 +42,19 @@ import {
   openclawModelRef,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
-import { deepMergeJson, upsertById, type JsonObject } from '../core/merge.js';
+import {
+  deepMergeJson,
+  isStaleProviderModelRef,
+  pruneStaleProviderAliases,
+  type JsonObject,
+} from '../core/merge.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файл конфига — только владелец (rw-------). */
 const OWNER_ONLY_MODE = 0o600;
+
+/** Актуальные id моделей каталога — для прунинга устаревших алиасов и сброса primary. */
+const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
 /**
  * Разрешение пути:
@@ -73,24 +81,22 @@ function asObject(value: unknown): JsonObject | undefined {
  * Строит итоговый конфиг из существующего объекта, не разрушая чужие данные.
  *
  * Шаги:
- *   - upsert наших 3 моделей в существующий models[] провайдера gonka по id;
- *   - deep-merge провайдера gonka (baseUrl/api/apiKey + смерженный models);
- *   - deep-merge алиасов в agents.defaults.models;
- *   - primary в agents.defaults.model.primary — ТОЛЬКО если ещё не задан.
+ *   - каталог моделей провайдера gonka строим FRESH из актуального набора
+ *     (deepMerge заменит массив → устаревшие модели, напр. Qwen, удаляются);
+ *   - deep-merge провайдера gonka (baseUrl/api/apiKey + наш models);
+ *   - deep-merge алиасов + прунинг НАШИХ устаревших алиасов в agents.defaults.models;
+ *   - primary в agents.defaults.model.primary — ставим наш дефолт, если не задан
+ *     ИЛИ указывает на нашу убранную модель (чужой/актуальный — не трогаем).
  */
 function buildConfig(existing: JsonObject): JsonObject {
-  // 1. Каталог моделей: стартуем с существующего массива провайдера (если есть)
-  //    и upsert-им наши записи по id — повторный apply не плодит дубли.
-  const existingProvider = asObject(
-    asObject(asObject(existing.models)?.providers)?.[OPENCLAW_PROVIDER_ID],
-  );
-  const existingModels = Array.isArray(existingProvider?.models)
-    ? (existingProvider!.models as unknown[])
-    : [];
-  let models: unknown[] = existingModels;
-  for (const spec of OPENCLAW_MODELS) {
-    models = upsertById(models, { id: spec.id, ...openclawModelEntry(spec) });
-  }
+  // 1. Каталог моделей нашего провайдера строим FRESH из актуального каталога —
+  //    НЕ сидим из существующего. deepMergeJson заменяет массив целиком, поэтому
+  //    устаревшие модели (напр. Qwen из прошлых версий установщика) удаляются, а
+  //    дубли не появляются. Чужие провайдеры/поля сохранит deepMerge ниже.
+  const models: unknown[] = OPENCLAW_MODELS.map((spec) => ({
+    id: spec.id,
+    ...openclawModelEntry(spec),
+  }));
 
   // 2. Патч провайдера + агентов (deep-merge сохранит чужие провайдеры/алиасы).
   const patch: JsonObject = {
@@ -123,19 +129,37 @@ function buildConfig(existing: JsonObject): JsonObject {
 
   const merged = deepMergeJson(existing, patch);
 
-  // 3. primary — только если пользователь ещё не задал свой.
+  // 3. Алиасы agents.defaults.models: deepMerge добавил наши актуальные, но НЕ
+  //    удалил бы НАШИ устаревшие (напр. gonka/Qwen…). Прунаем их; чужие алиасы
+  //    (openai/… и т.п.) и актуальные наши — остаются.
   const defaults = asObject(asObject(merged.agents)?.defaults) ?? {};
+  const aliasMap = asObject(defaults.models);
+  const prunedAliases = aliasMap
+    ? pruneStaleProviderAliases(aliasMap, OPENCLAW_PROVIDER_ID, CANONICAL_IDS)
+    : undefined;
+
+  // 4. primary — наш дефолт, если не задан ИЛИ указывает на нашу убранную модель
+  //    (иначе OpenClaw сошлётся на несуществующую). Пользовательский primary на
+  //    чужой провайдер или на актуальную нашу модель — НЕ трогаем.
   const modelBlock = asObject(defaults.model) ?? {};
-  if (typeof modelBlock.primary !== 'string' || modelBlock.primary.trim() === '') {
-    const agents = asObject(merged.agents) ?? {};
-    merged.agents = {
-      ...agents,
-      defaults: {
-        ...defaults,
-        model: { ...modelBlock, primary: OPENCLAW_DEFAULT_PRIMARY },
-      },
-    };
-  }
+  const primary = modelBlock.primary;
+  const needPrimaryReset =
+    typeof primary !== 'string' ||
+    primary.trim() === '' ||
+    isStaleProviderModelRef(primary, OPENCLAW_PROVIDER_ID, CANONICAL_IDS);
+
+  // Пересобираем agents.defaults с прунутыми алиасами и (при необходимости) primary.
+  const agents = asObject(merged.agents) ?? {};
+  merged.agents = {
+    ...agents,
+    defaults: {
+      ...defaults,
+      ...(prunedAliases ? { models: prunedAliases } : {}),
+      model: needPrimaryReset
+        ? { ...modelBlock, primary: OPENCLAW_DEFAULT_PRIMARY }
+        : modelBlock,
+    },
+  };
 
   return merged;
 }

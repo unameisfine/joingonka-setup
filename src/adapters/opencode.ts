@@ -41,11 +41,21 @@ import {
   opencodeModelEntry,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
-import { deepMergeJson, type JsonObject } from '../core/merge.js';
+import { deepMergeJson, isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файлы конфига/ключей — только владелец (rw-------). */
 const OWNER_ONLY_MODE = 0o600;
+
+/** Актуальные id моделей каталога — для прунинга устаревших и сброса дефолта. */
+const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
+
+/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
+function asObject(value: unknown): JsonObject | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonObject)
+    : undefined;
+}
 
 /**
  * Путь к opencode.json:
@@ -120,7 +130,21 @@ function buildConfig(existing: JsonObject): JsonObject {
 
   const merged = deepMergeJson(existing, patch);
 
-  if (typeof merged.model !== 'string' || (merged.model as string).trim() === '') {
+  // Наш провайдер — единственный источник правды по СВОЕМУ каталогу: заменяем
+  // models ЦЕЛИКОМ актуальным набором, чтобы убрать устаревшие модели (напр. Qwen),
+  // оставшиеся от прошлых версий установщика. deepMergeJson сливает объект models
+  // по ключам и сам старые id не удалил бы.
+  const ourProvider = asObject(asObject(merged.provider)?.[OPENCODE_PROVIDER_ID]);
+  if (ourProvider) ourProvider.models = buildModels();
+
+  // top-level `model`: наш дефолт, если не задан ИЛИ указывает на нашу убранную
+  // модель (иначе opencode сошлётся на несуществующую). Пользовательский дефолт на
+  // чужой провайдер (anthropic/…) или на актуальную нашу модель — НЕ трогаем.
+  if (
+    typeof merged.model !== 'string' ||
+    (merged.model as string).trim() === '' ||
+    isStaleProviderModelRef(merged.model, OPENCODE_PROVIDER_ID, CANONICAL_IDS)
+  ) {
     merged.model = OPENCODE_DEFAULT_MODEL;
   }
 

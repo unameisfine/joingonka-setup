@@ -114,6 +114,31 @@ describe('opencodeAdapter.apply — merge-aware', () => {
     expect(cfg.model).toBe('anthropic/claude-x'); // пользовательский model не перезаписан
   });
 
+  it('убирает устаревшую модель (Qwen) из каталога и сбрасывает наш устаревший дефолт', async () => {
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        model: 'joingonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8',
+        provider: {
+          joingonka: {
+            models: {
+              'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8': { name: 'Qwen (old)' },
+              'moonshotai/Kimi-K2.6': { name: 'stale name' },
+            },
+          },
+        },
+      }),
+    );
+    await opencodeAdapter.apply(input());
+    const cfg = readConfig();
+    const models = cfg.provider.joingonka.models;
+    expect(models['Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toBeUndefined(); // убрана
+    expect(models['moonshotai/Kimi-K2.6']).toBeTruthy(); // актуальная есть
+    expect(models['MiniMaxAI/MiniMax-M2.7']).toBeTruthy();
+    expect(cfg.model).toBe('joingonka/moonshotai/Kimi-K2.6'); // дефолт на Qwen → сброшен
+  });
+
   it('preserves foreign credentials in auth.json', async () => {
     mkdirSync(dirname(authPath), { recursive: true });
     writeFileSync(authPath, JSON.stringify({ openai: { type: 'api', key: 'sk-foreign' } }));

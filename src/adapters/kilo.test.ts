@@ -1,6 +1,6 @@
 /** Контракт-тесты Kilo-адаптера (OpenCode-формат + tool_call/reasoning). */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { kiloAdapter } from './kilo.js';
@@ -41,6 +41,39 @@ describe('kiloAdapter.apply', () => {
     expect(models['moonshotai/Kimi-K2.6'].reasoning).toBe(true);
     expect(models['moonshotai/Kimi-K2.6'].limit.output).toBe(3072);
     expect(models['MiniMaxAI/MiniMax-M2.7'].reasoning).toBeUndefined();
+  });
+
+  it('убирает устаревшую модель (Qwen) из каталога и сбрасывает наш устаревший дефолт', async () => {
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        model: 'joingonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8',
+        provider: {
+          joingonka: {
+            models: { 'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8': { name: 'Qwen (old)' } },
+          },
+        },
+      }),
+    );
+    await kiloAdapter.apply(input);
+    const cfg = readConfig();
+    const models = cfg.provider.joingonka.models;
+    expect(models['Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toBeUndefined(); // убрана
+    expect(models['moonshotai/Kimi-K2.6']).toBeTruthy();
+    expect(models['MiniMaxAI/MiniMax-M2.7']).toBeTruthy();
+    expect(cfg.model).toBe('joingonka/moonshotai/Kimi-K2.6'); // дефолт на Qwen → сброшен
+  });
+
+  it('НЕ трогает пользовательский дефолт на чужой провайдер', async () => {
+    writeFileSync(
+      configPath,
+      JSON.stringify({ model: 'anthropic/claude-x', provider: { anthropic: { name: 'A' } } }),
+    );
+    await kiloAdapter.apply(input);
+    const cfg = readConfig();
+    expect(cfg.model).toBe('anthropic/claude-x'); // чужой дефолт сохранён
+    expect(cfg.provider.anthropic).toBeTruthy(); // чужой провайдер цел
+    expect(cfg.provider.joingonka).toBeTruthy(); // наш добавлен
   });
 
   it('sets kilo $schema and default model when absent', async () => {

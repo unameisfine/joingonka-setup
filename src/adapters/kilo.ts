@@ -33,10 +33,20 @@ import {
   kiloModelEntry,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
-import { deepMergeJson, type JsonObject } from '../core/merge.js';
+import { deepMergeJson, isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 const OWNER_ONLY_MODE = 0o600;
+
+/** Актуальные id моделей каталога — для прунинга устаревших и сброса дефолта. */
+const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
+
+/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
+function asObject(value: unknown): JsonObject | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonObject)
+    : undefined;
+}
 
 function resolvePath(_scope: Scope): string {
   const fromEnv = process.env.KILO_CONFIG;
@@ -72,7 +82,20 @@ function buildConfig(existing: JsonObject): JsonObject {
 
   const merged = deepMergeJson(existing, patch);
 
-  if (typeof merged.model !== 'string' || (merged.model as string).trim() === '') {
+  // Наш провайдер — единственный источник правды по СВОЕМУ каталогу: заменяем
+  // models ЦЕЛИКОМ актуальным набором, чтобы убрать устаревшие модели (напр. Qwen),
+  // оставшиеся от прошлых версий установщика.
+  const ourProvider = asObject(asObject(merged.provider)?.[KILO_PROVIDER_ID]);
+  if (ourProvider) ourProvider.models = buildModels();
+
+  // top-level `model`: наш дефолт, если не задан ИЛИ указывает на нашу убранную
+  // модель. Пользовательский дефолт на чужой провайдер или на актуальную нашу
+  // модель — НЕ трогаем.
+  if (
+    typeof merged.model !== 'string' ||
+    (merged.model as string).trim() === '' ||
+    isStaleProviderModelRef(merged.model, KILO_PROVIDER_ID, CANONICAL_IDS)
+  ) {
     merged.model = KILO_DEFAULT_MODEL;
   }
 
