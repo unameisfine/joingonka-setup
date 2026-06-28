@@ -5,7 +5,7 @@
  * models.providers.<id> + agents.defaults. Проверяем:
  * - валидный JSON: провайдер gonka (api openai-completions, baseUrl С /v1,
  *   без поля auth, apiKey = ИМЯ env-переменной), модели каталога с верными maxTokens;
- * - agents.defaults.model.primary = gonka/moonshotai/Kimi-K2.6, алиасы каталога;
+ * - agents.defaults.model.primary = gonka/MiniMaxAI/MiniMax-M2.7, алиасы каталога;
  * - повторный apply убирает устаревшие модели (Qwen) из каталога/алиасов/primary;
  * - ключ jg-... пишется ЛИТЕРАЛОМ в конфиг (0o600), без env-переменной; messages
  *   НЕ содержит export GONKA_API_KEY (env-ссылка падала «SecretRef unresolved»);
@@ -153,11 +153,11 @@ describe('openclawAdapter.apply — provider block', () => {
 });
 
 describe('openclawAdapter.apply — agents defaults', () => {
-  it('sets primary to gonka/moonshotai/Kimi-K2.6 and registers 2 aliases', async () => {
+  it('sets primary to gonka/MiniMaxAI/MiniMax-M2.7 and registers 2 aliases', async () => {
     await openclawAdapter.apply(input());
     const defaults = readConfig().agents.defaults;
 
-    expect(defaults.model.primary).toBe('gonka/moonshotai/Kimi-K2.6');
+    expect(defaults.model.primary).toBe('gonka/MiniMaxAI/MiniMax-M2.7');
     expect(defaults.models['gonka/moonshotai/Kimi-K2.6']).toEqual({ alias: 'kimi-k2.6' });
     expect(defaults.models['gonka/MiniMaxAI/MiniMax-M2.7']).toEqual({ alias: 'minimax-m2.7' });
   });
@@ -263,7 +263,7 @@ describe('openclawAdapter.apply — deep merge (do not clobber foreign data)', (
 
     await openclawAdapter.apply(input());
 
-    expect(readConfig().agents.defaults.model.primary).toBe('gonka/moonshotai/Kimi-K2.6');
+    expect(readConfig().agents.defaults.model.primary).toBe('gonka/MiniMaxAI/MiniMax-M2.7');
   });
 
   it('убирает устаревшую модель (Qwen) из каталога, алиасов и primary на повторном apply', async () => {
@@ -307,7 +307,7 @@ describe('openclawAdapter.apply — deep merge (do not clobber foreign data)', (
     expect(aliases['openai/gpt-5.4']).toEqual({ alias: 'gpt' }); // чужой алиас цел
     expect(aliases['gonka/moonshotai/Kimi-K2.6']).toEqual({ alias: 'kimi-k2.6' });
 
-    expect(cfg.agents.defaults.model.primary).toBe('gonka/moonshotai/Kimi-K2.6'); // primary на Qwen → сброшен
+    expect(cfg.agents.defaults.model.primary).toBe('gonka/MiniMaxAI/MiniMax-M2.7'); // primary на Qwen → сброшен
   });
 });
 
