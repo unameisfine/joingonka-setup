@@ -25,13 +25,14 @@ const input = { apiKey: 'jg-test123', model: 'M', scope: 'user' as const };
 const readConfig = (): any => JSON.parse(readFileSync(configPath, 'utf-8'));
 
 describe('kiloAdapter.apply', () => {
-  it('writes provider with @ai-sdk/openai-compatible, baseURL /v1, {env} key', async () => {
+  it('writes provider with @ai-sdk/openai-compatible, baseURL /v1, LITERAL key', async () => {
     await kiloAdapter.apply(input);
     const p = readConfig().provider.joingonka;
     expect(p.npm).toBe('@ai-sdk/openai-compatible');
     expect(p.options.baseURL).toBe('https://gate.joingonka.ai/v1');
-    expect(p.options.apiKey).toBe('{env:GONKA_API_KEY}');
-    expect(JSON.stringify(readConfig()).includes('jg-test123')).toBe(false);
+    // Литеральный ключ (НЕ {env:...}) — работает без экспортированной переменной.
+    expect(p.options.apiKey).toBe('jg-test123');
+    expect(JSON.stringify(readConfig()).includes('jg-test123')).toBe(true);
   });
 
   it('models carry tool_call + limit, Kimi carries reasoning', async () => {

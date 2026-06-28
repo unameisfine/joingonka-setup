@@ -9,17 +9,19 @@
  *   models.providers.gonka = {
  *     baseUrl: BASE_URL_OPENAI (С /v1 — OpenAI-совместимый клиент),
  *     api: "openai-completions",
- *     apiKey: "${GONKA_API_KEY}" // ← ${env}-ссылка (OpenClaw резолвит ТОЛЬКО ${...})
+ *     apiKey: "<литеральный ключ jg-...>" // НЕ ${env}: без ${...} OpenClaw берёт как есть
  *     models: [ актуальные модели каталога Gonka ]
  *   }
  *   (поле `auth` НЕ пишем — как GonkaGate в OpenAI-режиме)
  *   agents.defaults.model.primary = "gonka/moonshotai/Kimi-K2.6" (только если не задан)
  *   agents.defaults.models[<ref>] = { alias } для моделей каталога
  *
- * ⚠️ Безопасность: реальный ключ jg-... в файл НЕ пишется. В конфиг идёт лишь
- *   ИМЯ переменной окружения (GONKA_API_KEY), а пользователю возвращается
- *   инструкция `export GONKA_API_KEY=jg-...`. Так секрет не оседает на диске
- *   в общедоступном (для процессов пользователя) JSON.
+ * Ключ: пишем РЕАЛЬНЫЙ jg-... литералом прямо в конфиг (файл 0o600, owner-only) —
+ *   как нативный auth.json у opencode. Раньше писали ${GONKA_API_KEY}-ссылку и
+ *   просили `export`, но gateway OpenClaw падал «SecretRef unresolved», если
+ *   переменная не была в его окружении (а установщик её не персистил). Литерал
+ *   работает без env. Изолированный конфиг OpenClaw — общие глобальные OPENAI_ /
+ *   ANTHROPIC_ переменные не трогаются (та же причина, по которой НЕ пишем env).
  *
  * Слияние НЕ разрушает чужие данные: другие провайдеры, чужие поля внутри
  * нашего провайдера, чужие алиасы и пользовательский primary сохраняются
@@ -34,8 +36,6 @@ import {
   BASE_URL_OPENAI,
   OPENCLAW_PROVIDER_ID,
   OPENCLAW_PROVIDER_API,
-  OPENCLAW_API_KEY_ENV,
-  OPENCLAW_API_KEY_REF,
   OPENCLAW_MODELS,
   OPENCLAW_DEFAULT_PRIMARY,
   openclawModelEntry,
@@ -88,7 +88,7 @@ function asObject(value: unknown): JsonObject | undefined {
  *   - primary в agents.defaults.model.primary — ставим наш дефолт, если не задан
  *     ИЛИ указывает на нашу убранную модель (чужой/актуальный — не трогаем).
  */
-function buildConfig(existing: JsonObject): JsonObject {
+function buildConfig(existing: JsonObject, apiKey: string): JsonObject {
   // 1. Каталог моделей нашего провайдера строим FRESH из актуального каталога —
   //    НЕ сидим из существующего. deepMergeJson заменяет массив целиком, поэтому
   //    устаревшие модели (напр. Qwen из прошлых версий установщика) удаляются, а
@@ -108,9 +108,13 @@ function buildConfig(existing: JsonObject): JsonObject {
         [OPENCLAW_PROVIDER_ID]: {
           baseUrl: BASE_URL_OPENAI,
           api: OPENCLAW_PROVIDER_API,
-          // apiKey = ${GONKA_API_KEY}-ссылка (НЕ секрет, НЕ голое имя): OpenClaw
-          // резолвит env ТОЛЬКО для ${...}-формы. Поле `auth` не пишем (OpenAI-режим).
-          apiKey: OPENCLAW_API_KEY_REF,
+          // apiKey = ЛИТЕРАЛЬНЫЙ ключ jg-... (НЕ ${env}-ссылка). Без ${...} OpenClaw
+          // берёт значение как есть → работает БЕЗ внешней env-переменной. Раньше
+          // тут была ${GONKA_API_KEY}-ссылка: gateway падал «SecretRef unresolved»,
+          // если переменная не экспортирована в его окружении (а установщик её не
+          // персистил). Файл пишется 0o600 (owner-only), как нативный auth.json у
+          // opencode. Поле `auth` не пишем (OpenAI-режим).
+          apiKey,
           models,
         },
       },
@@ -183,9 +187,10 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     }
   }
 
-  const config = buildConfig(existing);
+  const config = buildConfig(existing, input.apiKey);
 
-  // Записываем с правами 0o600 (в файле — имена env, но конфиг приватный).
+  // Записываем 0o600 (owner-only): в файле лежит литеральный ключ jg-..., как
+  // нативный auth.json у opencode.
   await atomicWrite(configPath, JSON.stringify(config, null, 2) + '\n', OWNER_ONLY_MODE);
 
   return {
@@ -197,13 +202,12 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       `Base URL: ${BASE_URL_OPENAI}`,
       `Default model: ${OPENCLAW_DEFAULT_PRIMARY}`,
       '',
-      // Ключ в файл НЕ пишется: openclaw.json ссылается на ${GONKA_API_KEY}
-      // (OpenClaw резолвит только ${...}). Имя уникальное, не пересекается с общими
-      // OPENAI_ или ANTHROPIC_ — соседние инструменты пользователя не затрагиваются.
-      `The config references the isolated env var ${OPENCLAW_API_KEY_ENV} (OpenClaw resolves \${...} only),`,
-      'so your other OpenAI-compatible tools are left untouched. Provide the key in your shell:',
-      `  export ${OPENCLAW_API_KEY_ENV}=${input.apiKey}`,
-      'Then restart OpenClaw.',
+      // Ключ записан ЛИТЕРАЛЬНО в конфиг (0o600). Никаких env-переменных: раньше мы
+      // писали ${GONKA_API_KEY}-ссылку, и gateway OpenClaw падал, если переменная не
+      // была экспортирована в его окружении. Это изолированный конфиг OpenClaw —
+      // общие OPENAI_*/ANTHROPIC_* не затрагиваются.
+      'Your API key was written into the config (file mode 0o600, owner-only) — no',
+      'environment variable needed. Just restart OpenClaw to pick up the provider.',
     ],
   };
 }
