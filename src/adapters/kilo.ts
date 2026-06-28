@@ -3,15 +3,16 @@
  *
  * Новая (OpenCode-based) архитектура Kilo использует тот же формат кастомного
  * провайдера, что opencode (`@ai-sdk/openai-compatible`):
- *   provider.joingonka = { npm, name, options:{baseURL, apiKey:"{env:GONKA_API_KEY}"},
+ *   provider.joingonka = { npm, name, options:{baseURL, apiKey:"<литеральный jg-...>"},
  *                          models:{ "<id>":{ name, tool_call, [reasoning], limit } } }
  *   model (top-level) = "joingonka/moonshotai/Kimi-K2.6" — только если не задан.
  *
  * Отличия от opencode: $schema = app.kilo.ai; модели несут `tool_call:true`
  * (Kilo требует нативный tool-calling) и `reasoning:true` для Kimi.
  *
- * Пишем чистый JSON в .jsonc-файл (JSON ⊂ JSONC, Kilo прочитает). Ключ jg-... в
- * файл НЕ пишется (`{env:GONKA_API_KEY}`). Слияние не разрушает чужие данные.
+ * Пишем чистый JSON в .jsonc-файл (JSON ⊂ JSONC, Kilo прочитает). Ключ jg-... пишем
+ * ЛИТЕРАЛОМ в файл (0o600, owner-only) — env не нужен (раньше была {env:GONKA_API_KEY},
+ * но без экспортированной переменной провайдер не поднимался). Слияние не разрушает чужие данные.
  *
  * Достоверность сверена с исходником Kilo (packages/opencode/src/config/config.ts,
  * 2026-06-25): глобальный loader ищет ["kilo.jsonc","kilo.json","opencode.jsonc",
@@ -27,7 +28,6 @@ import {
   BASE_URL_OPENAI,
   OPENCLAW_MODELS,
   OPENCODE_NPM,
-  OPENCODE_API_KEY_REF,
   KILO_PROVIDER_ID,
   KILO_DEFAULT_MODEL,
   kiloModelEntry,
@@ -64,7 +64,7 @@ function buildModels(): JsonObject {
   return models;
 }
 
-function buildConfig(existing: JsonObject): JsonObject {
+function buildConfig(existing: JsonObject, apiKey: string): JsonObject {
   const patch: JsonObject = {
     $schema: 'https://app.kilo.ai/config.json',
     provider: {
@@ -73,7 +73,11 @@ function buildConfig(existing: JsonObject): JsonObject {
         name: 'JoinGonka',
         options: {
           baseURL: BASE_URL_OPENAI,
-          apiKey: OPENCODE_API_KEY_REF,
+          // Литеральный ключ jg-... (НЕ {env:...}-ссылка): без env-формы Kilo берёт
+          // значение как есть → работает БЕЗ внешней переменной. Раньше тут была
+          // {env:GONKA_API_KEY}, и без экспортированной переменной провайдер не
+          // поднимался. Файл пишется 0o600 (owner-only).
+          apiKey,
         },
         models: buildModels(),
       },
@@ -120,7 +124,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     }
   }
 
-  const config = buildConfig(existing);
+  const config = buildConfig(existing, input.apiKey);
   await atomicWrite(configPath, JSON.stringify(config, null, 2) + '\n', OWNER_ONLY_MODE);
 
   return {
@@ -132,15 +136,11 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       `Base URL: ${BASE_URL_OPENAI}`,
       `Default model: ${KILO_DEFAULT_MODEL}`,
       '',
-      // Ключ не в конфиге: kilo.jsonc ссылается на ИЗОЛИРОВАННУЮ переменную
-      // GONKA_API_KEY через родной для Kilo синтаксис {env:...}. Имя уникально и
-      // НЕ пересекается с общими OPENAI_*/ANTHROPIC_*, поэтому прочие инструменты
-      // пользователя не затрагиваются. Дальше — на выбор: env или нативный store.
-      "The config references an isolated env var GONKA_API_KEY (Kilo's native {env:} syntax),",
-      'so your other OpenAI/Anthropic tools are left untouched. Provide the key either way:',
-      `  - this shell session:  export GONKA_API_KEY=${input.apiKey}`,
-      "  - or Kilo's own credential store (no env):  kilo auth login",
-      'Then restart Kilo to pick up the provider.',
+      // Ключ записан ЛИТЕРАЛЬНО в kilo.jsonc (0o600). Раньше писали {env:GONKA_API_KEY}
+      // и просили export — но без экспортированной переменной провайдер не поднимался.
+      // Это изолированный конфиг Kilo, общие OPENAI_*/ANTHROPIC_* не трогаются.
+      'Your API key was written into the config (file mode 0o600, owner-only) — no',
+      'environment variable needed. Just restart Kilo to pick up the provider.',
     ],
   };
 }

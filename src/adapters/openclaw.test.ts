@@ -7,8 +7,8 @@
  *   без поля auth, apiKey = ИМЯ env-переменной), модели каталога с верными maxTokens;
  * - agents.defaults.model.primary = gonka/moonshotai/Kimi-K2.6, алиасы каталога;
  * - повторный apply убирает устаревшие модели (Qwen) из каталога/алиасов/primary;
- * - РЕГРЕСС БЕЗОПАСНОСТИ: сам ключ jg-... в файл НЕ попадает, а messages
- *   содержит инструкцию export GONKA_API_KEY;
+ * - ключ jg-... пишется ЛИТЕРАЛОМ в конфиг (0o600), без env-переменной; messages
+ *   НЕ содержит export GONKA_API_KEY (env-ссылка падала «SecretRef unresolved»);
  * - deep-merge: чужой провайдер (openai) и чужие алиасы сохраняются;
  * - primary НЕ перезаписывается, если уже задан пользователем;
  * - upsert моделей по id: два apply подряд → нет дублей, идемпотентность;
@@ -111,12 +111,13 @@ describe('openclawAdapter.apply — provider block', () => {
     expect('auth' in provider).toBe(false);
   });
 
-  it('writes apiKey as an ${ENV} substitution ref, not the secret or a bare name', async () => {
+  it('writes apiKey as the LITERAL key (not a ${ENV} ref → works without env)', async () => {
     await openclawAdapter.apply(input());
     const cfg = readConfig();
-    // OpenClaw резолвит env только для ${VAR}; голое "GONKA_API_KEY" ушло бы
-    // литералом в Authorization → 401. Нужна именно ${...}-форма.
-    expect(cfg.models.providers.gonka.apiKey).toBe('${GONKA_API_KEY}');
+    // Литерал jg-...: OpenClaw без ${...} берёт значение как есть и НЕ падает
+    // «SecretRef unresolved», если переменной нет в окружении gateway.
+    expect(cfg.models.providers.gonka.apiKey).toBe('jg-test123');
+    expect(cfg.models.providers.gonka.apiKey).not.toContain('${');
   });
 
   it('writes models.mode = "merge" (сливать наш каталог с бандлами, не заменять)', async () => {
@@ -163,18 +164,18 @@ describe('openclawAdapter.apply — agents defaults', () => {
 });
 
 describe('openclawAdapter.apply — secret safety', () => {
-  it('NEVER writes the jg- key into the file', async () => {
+  it('writes the literal jg- key into the (0o600) config — no env dependency', async () => {
     await openclawAdapter.apply(input());
     const raw = readFileSync(defaultConfigPath(), 'utf-8');
-    expect(raw).not.toContain('jg-test123');
-    expect(raw).not.toContain('jg-');
+    expect(raw).toContain('jg-test123');
+    expect(raw).not.toContain('${GONKA_API_KEY}');
   });
 
-  it('returns an export instruction for GONKA_API_KEY in messages', async () => {
+  it('does NOT instruct an env export (key lives in the config now)', async () => {
     const result = await openclawAdapter.apply(input());
     const joined = result.messages.join('\n');
-    expect(joined).toContain('GONKA_API_KEY');
-    expect(joined).toMatch(/export\s+GONKA_API_KEY=/);
+    expect(joined).not.toMatch(/export\s+GONKA_API_KEY=/);
+    expect(joined).toContain('0o600');
   });
 });
 
