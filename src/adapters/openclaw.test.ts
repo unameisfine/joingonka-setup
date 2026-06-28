@@ -4,8 +4,9 @@
  * Реальный OpenClaw использует JSON-конфиг с вложенной структурой
  * models.providers.<id> + agents.defaults. Проверяем:
  * - валидный JSON: провайдер gonka (api openai-completions, baseUrl С /v1,
- *   без поля auth, apiKey = ИМЯ env-переменной), 3 модели с верными maxTokens;
- * - agents.defaults.model.primary = gonka/moonshotai/Kimi-K2.6, 3 алиаса;
+ *   без поля auth, apiKey = ИМЯ env-переменной), модели каталога с верными maxTokens;
+ * - agents.defaults.model.primary = gonka/moonshotai/Kimi-K2.6, алиасы каталога;
+ * - повторный apply убирает устаревшие модели (Qwen) из каталога/алиасов/primary;
  * - РЕГРЕСС БЕЗОПАСНОСТИ: сам ключ jg-... в файл НЕ попадает, а messages
  *   содержит инструкцию export GONKA_API_KEY;
  * - deep-merge: чужой провайдер (openai) и чужие алиасы сохраняются;
@@ -262,6 +263,50 @@ describe('openclawAdapter.apply — deep merge (do not clobber foreign data)', (
     await openclawAdapter.apply(input());
 
     expect(readConfig().agents.defaults.model.primary).toBe('gonka/moonshotai/Kimi-K2.6');
+  });
+
+  it('убирает устаревшую модель (Qwen) из каталога, алиасов и primary на повторном apply', async () => {
+    const dir = join(tmpDir, '.openclaw');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'openclaw.json'),
+      JSON.stringify({
+        models: {
+          providers: {
+            gonka: {
+              models: [
+                { id: 'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8', name: 'Qwen (old)' },
+                { id: 'moonshotai/Kimi-K2.6', name: 'stale' },
+              ],
+            },
+          },
+        },
+        agents: {
+          defaults: {
+            model: { primary: 'gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8' },
+            models: {
+              'gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8': { alias: 'qwen' },
+              'openai/gpt-5.4': { alias: 'gpt' },
+            },
+          },
+        },
+      }),
+    );
+
+    await openclawAdapter.apply(input());
+
+    const cfg = readConfig();
+    const ids = cfg.models.providers.gonka.models.map((m: any) => m.id);
+    expect(ids).not.toContain('Qwen/Qwen3-235B-A22B-Instruct-2507-FP8'); // убрана из каталога
+    expect(ids).toContain('moonshotai/Kimi-K2.6');
+    expect(ids).toContain('MiniMaxAI/MiniMax-M2.7');
+
+    const aliases = cfg.agents.defaults.models;
+    expect(aliases['gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toBeUndefined(); // наш устаревший алиас убран
+    expect(aliases['openai/gpt-5.4']).toEqual({ alias: 'gpt' }); // чужой алиас цел
+    expect(aliases['gonka/moonshotai/Kimi-K2.6']).toEqual({ alias: 'kimi-k2.6' });
+
+    expect(cfg.agents.defaults.model.primary).toBe('gonka/moonshotai/Kimi-K2.6'); // primary на Qwen → сброшен
   });
 });
 

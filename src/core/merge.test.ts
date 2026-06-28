@@ -11,7 +11,13 @@
  *   добавляет новый; не плодит дубли при повторном вызове).
  */
 import { describe, it, expect } from 'vitest';
-import { mergeJson, deepMergeJson, upsertById } from './merge.js';
+import {
+  mergeJson,
+  deepMergeJson,
+  upsertById,
+  isStaleProviderModelRef,
+  pruneStaleProviderAliases,
+} from './merge.js';
 
 describe('mergeJson', () => {
   it('preserves foreign top-level fields', () => {
@@ -155,5 +161,46 @@ describe('upsertById', () => {
     const result = upsertById(arr, { id: 'a', v: 2 });
     expect(result[0]).toBe(42);
     expect(result[1]).toEqual({ id: 'a', v: 2 });
+  });
+});
+
+describe('isStaleProviderModelRef', () => {
+  const canonical = ['moonshotai/Kimi-K2.6', 'MiniMaxAI/MiniMax-M2.7'];
+
+  it('true для НАШЕЙ убранной модели (вне каталога)', () => {
+    expect(
+      isStaleProviderModelRef('gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8', 'gonka', canonical),
+    ).toBe(true);
+  });
+  it('false для актуальной нашей модели (modelId с / сохраняется целиком)', () => {
+    expect(isStaleProviderModelRef('gonka/moonshotai/Kimi-K2.6', 'gonka', canonical)).toBe(false);
+  });
+  it('false для ЧУЖОГО провайдера (не наш префикс)', () => {
+    expect(isStaleProviderModelRef('openai/gpt-5.4', 'gonka', canonical)).toBe(false);
+  });
+  it('false для не-строки', () => {
+    expect(isStaleProviderModelRef(undefined, 'gonka', canonical)).toBe(false);
+    expect(isStaleProviderModelRef(123, 'gonka', canonical)).toBe(false);
+  });
+});
+
+describe('pruneStaleProviderAliases', () => {
+  const canonical = ['moonshotai/Kimi-K2.6', 'MiniMaxAI/MiniMax-M2.7'];
+
+  it('убирает НАШ устаревший алиас, оставляет чужой и актуальный наш', () => {
+    const aliases = {
+      'gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8': { alias: 'qwen' },
+      'gonka/moonshotai/Kimi-K2.6': { alias: 'kimi' },
+      'openai/gpt-5.4': { alias: 'gpt' },
+    };
+    const out = pruneStaleProviderAliases(aliases, 'gonka', canonical);
+    expect(out['gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toBeUndefined();
+    expect(out['gonka/moonshotai/Kimi-K2.6']).toEqual({ alias: 'kimi' });
+    expect(out['openai/gpt-5.4']).toEqual({ alias: 'gpt' });
+  });
+  it('не мутирует исходный объект', () => {
+    const aliases = { 'gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8': { alias: 'q' } };
+    pruneStaleProviderAliases(aliases, 'gonka', canonical);
+    expect(aliases['gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toEqual({ alias: 'q' });
   });
 });

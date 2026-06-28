@@ -106,3 +106,52 @@ export function upsertById(array: unknown[], item: JsonObject & { id: string }):
   out[idx] = { ...existing, ...item };
   return out;
 }
+
+/**
+ * true, если `ref` вида `<providerId>/<modelId>` указывает на НАШ провайдер, но
+ * `modelId` уже НЕ входит в актуальный каталог `canonicalIds`.
+ *
+ * Нужно, чтобы сбросить устаревший default/primary (напр. на убранную из сети
+ * модель Qwen), НЕ трогая ссылки на чужие провайдеры и на актуальные наши модели.
+ *
+ * - не строка → false;
+ * - не начинается с `<providerId>/` (чужой провайдер) → false;
+ * - начинается, но `modelId` есть в каталоге (актуальная наша) → false;
+ * - начинается и `modelId` вне каталога (наша устаревшая) → true.
+ *
+ * `modelId` может сам содержать `/` (напр. `moonshotai/Kimi-K2.6`) — берём весь
+ * остаток после первого `<providerId>/`.
+ */
+export function isStaleProviderModelRef(
+  ref: unknown,
+  providerId: string,
+  canonicalIds: readonly string[],
+): boolean {
+  if (typeof ref !== 'string') return false;
+  const prefix = `${providerId}/`;
+  if (!ref.startsWith(prefix)) return false;
+  const modelId = ref.slice(prefix.length);
+  return !canonicalIds.includes(modelId);
+}
+
+/**
+ * Возвращает НОВЫЙ объект алиасов (keyed by `<provider>/<modelId>`) без НАШИХ
+ * устаревших ключей — тех, что начинаются с `<providerId>/`, но `modelId` которых
+ * нет в актуальном каталоге. Чужие провайдеры и актуальные наши ключи сохраняются.
+ *
+ * Immutable: исходный объект не мутируется.
+ */
+export function pruneStaleProviderAliases(
+  aliases: JsonObject,
+  providerId: string,
+  canonicalIds: readonly string[],
+): JsonObject {
+  const out: JsonObject = {};
+  for (const [key, value] of Object.entries(aliases)) {
+    if (isStaleProviderModelRef(key, providerId, canonicalIds)) {
+      continue; // наш устаревший алиас → выкинуть
+    }
+    out[key] = value;
+  }
+  return out;
+}
