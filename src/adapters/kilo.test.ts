@@ -40,7 +40,7 @@ describe('kiloAdapter.apply', () => {
     const models = readConfig().provider.joingonka.models;
     expect(models['moonshotai/Kimi-K2.6'].tool_call).toBe(true);
     expect(models['moonshotai/Kimi-K2.6'].reasoning).toBe(true);
-    expect(models['moonshotai/Kimi-K2.6'].limit.output).toBe(3072);
+    expect(models['moonshotai/Kimi-K2.6'].limit.output).toBe(8192);
     expect(models['MiniMaxAI/MiniMax-M2.7'].reasoning).toBeUndefined();
   });
 

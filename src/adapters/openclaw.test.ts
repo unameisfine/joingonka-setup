@@ -133,14 +133,14 @@ describe('openclawAdapter.apply — provider block', () => {
     expect(models).toHaveLength(2);
     // :online-вариантов больше нет — веб-поиск в OpenClaw через его tools.web.
     expect(models.some((m) => String(m.id).endsWith(':online'))).toBe(false);
-    expect(byId.get('moonshotai/Kimi-K2.6')?.maxTokens).toBe(3072);
-    expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.maxTokens).toBe(4096);
+    expect(byId.get('moonshotai/Kimi-K2.6')?.maxTokens).toBe(8192);
+    expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.maxTokens).toBe(8192);
 
     // Форма записи модели
     const kimi = byId.get('moonshotai/Kimi-K2.6')!;
     expect(kimi.name).toBe('Kimi K2.6 (Gonka)');
     expect(kimi.input).toEqual(['text']);
-    expect(kimi.contextWindow).toBe(131072);
+    expect(kimi.contextWindow).toBe(200000);
     expect(kimi.cost).toEqual({ input: 0.07, output: 0.1, cacheRead: 0.07, cacheWrite: 0.07 });
   });
 
