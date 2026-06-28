@@ -73,8 +73,10 @@ export interface OpenClawModelSpec {
 
 /**
  * Общий context window всех текущих MoE-моделей сети (совпадает с SSOT).
+ * 200000 — эмпирически подтверждён (SSOT model-specs.ts: вход 200 011 токенов
+ * принят, HTTP 200). Ранее заявленные 131072 были занижены.
  */
-const OPENCLAW_CONTEXT_WINDOW = 131072;
+const OPENCLAW_CONTEXT_WINDOW = 200000;
 
 /**
  * Единая тарификация для каталога OpenClaw ($/1M токенов).
@@ -101,8 +103,11 @@ const OPENCLAW_COST = {
  * SSOT по id/maxTokens — gateway/src/modules/network-status/model-specs.ts.
  */
 export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
-  { id: 'moonshotai/Kimi-K2.6', name: 'Kimi K2.6 (Gonka)', maxTokens: 3072, aliasFor: 'kimi-k2.6' },
-  { id: 'MiniMaxAI/MiniMax-M2.7', name: 'MiniMax M2.7 (Gonka)', maxTokens: 4096, aliasFor: 'minimax-m2.7' },
+  // maxTokens=8192 — единый потолок выдачи (max_output) обеих моделей: gateway
+  // клипует max_tokens до 8192 (SSOT model-specs.ts; MiniMax доказан 8192,
+  // finish_reason:length). Ранее стояли заниженные 3072/4096.
+  { id: 'moonshotai/Kimi-K2.6', name: 'Kimi K2.6 (Gonka)', maxTokens: 8192, aliasFor: 'kimi-k2.6' },
+  { id: 'MiniMaxAI/MiniMax-M2.7', name: 'MiniMax M2.7 (Gonka)', maxTokens: 8192, aliasFor: 'minimax-m2.7' },
 ];
 
 /**
