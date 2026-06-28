@@ -62,7 +62,7 @@ describe('kiloAdapter.apply', () => {
     expect(models['Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toBeUndefined(); // убрана
     expect(models['moonshotai/Kimi-K2.6']).toBeTruthy();
     expect(models['MiniMaxAI/MiniMax-M2.7']).toBeTruthy();
-    expect(cfg.model).toBe('joingonka/moonshotai/Kimi-K2.6'); // дефолт на Qwen → сброшен
+    expect(cfg.model).toBe('joingonka/MiniMaxAI/MiniMax-M2.7'); // дефолт на Qwen → сброшен
   });
 
   it('НЕ трогает пользовательский дефолт на чужой провайдер', async () => {
@@ -81,6 +81,6 @@ describe('kiloAdapter.apply', () => {
     await kiloAdapter.apply(input);
     const cfg = readConfig();
     expect(cfg.$schema).toBe('https://app.kilo.ai/config.json');
-    expect(cfg.model).toBe('joingonka/moonshotai/Kimi-K2.6');
+    expect(cfg.model).toBe('joingonka/MiniMaxAI/MiniMax-M2.7');
   });
 });

@@ -46,21 +46,6 @@ export const KIMI_MODEL = 'moonshotai/Kimi-K2.6';
 export const OPENCLAW_PROVIDER_ID = 'gonka';
 
 /**
- * Имя env-переменной, ИЗ которой OpenClaw читает наш ключ во время работы.
- * Ключ jg-... не должен попадать в файл на диске — пользователю выдаётся
- * инструкция `export GONKA_API_KEY=jg-...`.
- */
-export const OPENCLAW_API_KEY_ENV = 'GONKA_API_KEY';
-
-/**
- * Что РЕАЛЬНО пишется в `apiKey` конфига — `${GONKA_API_KEY}`-ссылка, НЕ голое имя.
- * OpenClaw подставляет env только для формы `${VAR}`/`$VAR`/известных маркеров
- * (`models-config.providers.secrets.ts`); голое `GONKA_API_KEY` он бы отправил
- * ЛИТЕРАЛОМ в `Authorization: Bearer GONKA_API_KEY` → 401. Поэтому ровно `${...}`.
- */
-export const OPENCLAW_API_KEY_REF = `\${${OPENCLAW_API_KEY_ENV}}`;
-
-/**
  * Транспорт провайдера для OpenClaw. Подключаемся в OpenAI-режиме через наш
  * зрелый роут /v1/chat/completions (как GonkaGate), поэтому
  * `openai-completions`. baseUrl при этом — С суффиксом /v1 (BASE_URL_OPENAI).
@@ -108,8 +93,9 @@ const OPENCLAW_COST = {
 /**
  * Каталог моделей, которые адаптер прописывает в OpenClaw-провайдер `gonka`.
  *
- * Базовые модели (с alias). Порядок совпадает с рабочим конфигом оператора:
- * Kimi — первой (она же primary). Веб-поиск в OpenClaw — через его СОБСТВЕННЫЙ
+ * Базовые модели (с alias). Primary (agents.defaults.model.primary) — MiniMax-M2.7
+ * (operational, через DEFAULT_MODEL); Kimi оставлена в каталоге как long-context
+ * вариант (часто в outage, поэтому НЕ primary). Веб-поиск в OpenClaw — через его СОБСТВЕННЫЙ
  * встроенный tools.web (client-side); серверный web_search gateway активируется
  * per-request (plugins mode:'agent') и здесь модель-варианты не нужны.
  * SSOT по id/maxTokens — gateway/src/modules/network-status/model-specs.ts.
@@ -124,7 +110,7 @@ export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
  * `<provider>/<modelId>`. Ставится в agents.defaults.model.primary ТОЛЬКО
  * если пользователь ещё не задал свой primary.
  */
-export const OPENCLAW_DEFAULT_PRIMARY = `${OPENCLAW_PROVIDER_ID}/moonshotai/Kimi-K2.6`;
+export const OPENCLAW_DEFAULT_PRIMARY = `${OPENCLAW_PROVIDER_ID}/${DEFAULT_MODEL}`;
 
 /**
  * Сборка JSON-записи модели для каталога провайдера OpenClaw.
@@ -153,16 +139,8 @@ export const OPENCODE_PROVIDER_ID = 'joingonka';
  */
 export const OPENCODE_NPM = '@ai-sdk/openai-compatible';
 
-/**
- * Ref-подстановка ключа из env синтаксисом `{env:VAR}` (НЕ `${VAR}`).
- * ⚠️ opencode БОЛЬШЕ НЕ использует env — он пишет ключ нативно в
- * ~/.local/share/opencode/auth.json (см. adapters/opencode.ts). Эта константа
- * осталась для адаптера kilo (имя историческое).
- */
-export const OPENCODE_API_KEY_REF = `{env:${OPENCLAW_API_KEY_ENV}}`;
-
-/** Модель по умолчанию (top-level `model`): `<provider>/<modelId>`. */
-export const OPENCODE_DEFAULT_MODEL = `${OPENCODE_PROVIDER_ID}/moonshotai/Kimi-K2.6`;
+/** Модель по умолчанию (top-level `model`): `<provider>/<modelId>` (= DEFAULT_MODEL). */
+export const OPENCODE_DEFAULT_MODEL = `${OPENCODE_PROVIDER_ID}/${DEFAULT_MODEL}`;
 
 /**
  * Запись модели для opencode: `models: { "<id>": { name, limit:{context,output} } }`.
@@ -186,7 +164,7 @@ export function opencodeModelEntry(spec: OpenClawModelSpec): Record<string, unkn
 export const AIDER_MODEL_PREFIX = 'openai/';
 
 /** Модель Aider по умолчанию (с обязательным префиксом). */
-export const AIDER_DEFAULT_MODEL = `${AIDER_MODEL_PREFIX}moonshotai/Kimi-K2.6`;
+export const AIDER_DEFAULT_MODEL = `${AIDER_MODEL_PREFIX}${DEFAULT_MODEL}`;
 
 // --- Kilo Code (https://kilo.ai) — JSONC ~/.config/kilo/kilo.jsonc (OpenCode-формат) ---
 
@@ -194,7 +172,7 @@ export const AIDER_DEFAULT_MODEL = `${AIDER_MODEL_PREFIX}moonshotai/Kimi-K2.6`;
 export const KILO_PROVIDER_ID = 'joingonka';
 
 /** Модель по умолчанию (top-level `model`): `<provider>/<modelId>`. */
-export const KILO_DEFAULT_MODEL = `${KILO_PROVIDER_ID}/moonshotai/Kimi-K2.6`;
+export const KILO_DEFAULT_MODEL = `${KILO_PROVIDER_ID}/${DEFAULT_MODEL}`;
 
 /**
  * Запись модели для Kilo: `{ name, tool_call, [reasoning], limit:{context,output} }`.

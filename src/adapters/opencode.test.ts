@@ -79,11 +79,11 @@ describe('opencodeAdapter.apply — provider block (opencode.json)', () => {
     expect(models['moonshotai/Kimi-K2.6'].limit.context).toBeGreaterThan(0);
   });
 
-  it('sets $schema and default top-level model (Kimi) when absent', async () => {
+  it('sets $schema and default top-level model (MiniMax) when absent', async () => {
     await opencodeAdapter.apply(input());
     const cfg = readConfig();
     expect(cfg.$schema).toBe('https://opencode.ai/config.json');
-    expect(cfg.model).toBe('joingonka/moonshotai/Kimi-K2.6');
+    expect(cfg.model).toBe('joingonka/MiniMaxAI/MiniMax-M2.7');
   });
 });
 
@@ -136,7 +136,7 @@ describe('opencodeAdapter.apply — merge-aware', () => {
     expect(models['Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toBeUndefined(); // убрана
     expect(models['moonshotai/Kimi-K2.6']).toBeTruthy(); // актуальная есть
     expect(models['MiniMaxAI/MiniMax-M2.7']).toBeTruthy();
-    expect(cfg.model).toBe('joingonka/moonshotai/Kimi-K2.6'); // дефолт на Qwen → сброшен
+    expect(cfg.model).toBe('joingonka/MiniMaxAI/MiniMax-M2.7'); // дефолт на Qwen → сброшен
   });
 
   it('preserves foreign credentials in auth.json', async () => {
