@@ -10,7 +10,7 @@
  * Промпты инъектируются через deps — это делает оркестратор полностью
  * тестируемым (spy-функции) и отвязывает его от @inquirer/prompts.
  */
-import { DEFAULT_MODEL, KIMI_MODEL } from './constants.js';
+import { DEFAULT_MODEL, DEEPSEEK_MODEL, KIMI_MODEL } from './constants.js';
 import { validateApiKey } from './core/validate.js';
 import { getAdapter, listTools } from './adapters/registry.js';
 import type { ApplyResult, Scope } from './adapters/types.js';
@@ -48,11 +48,13 @@ export interface RunOutcome {
  * Разрешает значение модели:
  * - undefined / пусто → DEFAULT_MODEL;
  * - 'kimi' (регистронезависимо) → KIMI_MODEL;
+ * - 'deepseek' (регистронезависимо) → DEEPSEEK_MODEL;
  * - любое другое → используется как явный id модели.
  */
 function resolveModel(model?: string): string {
   if (!model) return DEFAULT_MODEL;
   if (model.toLowerCase() === 'kimi') return KIMI_MODEL;
+  if (model.toLowerCase() === 'deepseek') return DEEPSEEK_MODEL;
   return model;
 }
 

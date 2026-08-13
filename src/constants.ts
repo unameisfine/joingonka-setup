@@ -34,6 +34,12 @@ export const DEFAULT_MODEL = 'MiniMaxAI/MiniMax-M2.7';
  */
 export const KIMI_MODEL = 'moonshotai/Kimi-K2.6';
 
+/**
+ * Альтернативная модель DeepSeek V4 Flash — контекст 380K (самый длинный в
+ * сети), reasoning + tool calling. Выбирается через CLI `--model deepseek`.
+ */
+export const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash-0731';
+
 // ────────────────────────────────────────────────────────────────────────────
 // OpenClaw-специфичные константы (JSON-конфиг ~/.openclaw/openclaw.json)
 // ────────────────────────────────────────────────────────────────────────────
@@ -69,12 +75,17 @@ export interface OpenClawModelSpec {
   name: string;
   maxTokens: number;
   aliasFor?: string;
+  /** Пер-модельный контекст; если не задан — общий OPENCLAW_CONTEXT_WINDOW (200K). */
+  contextWindow?: number;
+  /** Модель отдаёт reasoning-контент (Kilo помечает `reasoning:true`). */
+  reasoning?: boolean;
 }
 
 /**
- * Общий context window всех текущих MoE-моделей сети (совпадает с SSOT).
- * 200000 — эмпирически подтверждён (SSOT model-specs.ts: вход 200 011 токенов
- * принят, HTTP 200). Ранее заявленные 131072 были занижены.
+ * Общий context window Kimi/MiniMax (совпадает с SSOT). 200000 — эмпирически
+ * подтверждён (SSOT model-specs.ts: вход 200 011 токенов принят, HTTP 200).
+ * Ранее заявленные 131072 были занижены. У моделей с другим контекстом
+ * (DeepSeek V4 Flash — 380000) он задаётся пер-модельно в OPENCLAW_MODELS.
  */
 const OPENCLAW_CONTEXT_WINDOW = 200000;
 
@@ -103,11 +114,21 @@ const OPENCLAW_COST = {
  * SSOT по id/maxTokens — gateway/src/modules/network-status/model-specs.ts.
  */
 export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
-  // maxTokens=8192 — единый потолок выдачи (max_output) обеих моделей: gateway
+  // maxTokens=8192 — единый потолок выдачи (max_output) всех моделей: gateway
   // клипует max_tokens до 8192 (SSOT model-specs.ts; MiniMax доказан 8192,
   // finish_reason:length). Ранее стояли заниженные 3072/4096.
-  { id: 'moonshotai/Kimi-K2.6', name: 'Kimi K2.6 (Gonka)', maxTokens: 8192, aliasFor: 'kimi-k2.6' },
+  { id: 'moonshotai/Kimi-K2.6', name: 'Kimi K2.6 (Gonka)', maxTokens: 8192, aliasFor: 'kimi-k2.6', reasoning: true },
   { id: 'MiniMaxAI/MiniMax-M2.7', name: 'MiniMax M2.7 (Gonka)', maxTokens: 8192, aliasFor: 'minimax-m2.7' },
+  // Контекст 380000 — замерен на проде 13.08.2026 (вход 381K токенов принят,
+  // SSOT model-specs.ts). Самый длинный контекст в сети Gonka.
+  {
+    id: 'deepseek-ai/DeepSeek-V4-Flash-0731',
+    name: 'DeepSeek V4 Flash (Gonka)',
+    maxTokens: 8192,
+    aliasFor: 'deepseek-v4-flash',
+    contextWindow: 380000,
+    reasoning: true,
+  },
 ];
 
 /**
@@ -127,7 +148,7 @@ export function openclawModelEntry(spec: OpenClawModelSpec): Record<string, unkn
     id: spec.id,
     name: spec.name,
     input: ['text'],
-    contextWindow: OPENCLAW_CONTEXT_WINDOW,
+    contextWindow: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW,
     maxTokens: spec.maxTokens,
     cost: { ...OPENCLAW_COST },
   };
@@ -155,7 +176,7 @@ export const OPENCODE_DEFAULT_MODEL = `${OPENCODE_PROVIDER_ID}/${DEFAULT_MODEL}`
 export function opencodeModelEntry(spec: OpenClawModelSpec): Record<string, unknown> {
   return {
     name: spec.name,
-    limit: { context: OPENCLAW_CONTEXT_WINDOW, output: spec.maxTokens },
+    limit: { context: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW, output: spec.maxTokens },
   };
 }
 
@@ -188,9 +209,9 @@ export function kiloModelEntry(spec: OpenClawModelSpec): Record<string, unknown>
   const entry: Record<string, unknown> = {
     name: spec.name,
     tool_call: true,
-    limit: { context: OPENCLAW_CONTEXT_WINDOW, output: spec.maxTokens },
+    limit: { context: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW, output: spec.maxTokens },
   };
-  if (spec.id.includes('Kimi')) entry.reasoning = true;
+  if (spec.reasoning) entry.reasoning = true;
   return entry;
 }
 
