@@ -125,16 +125,17 @@ describe('openclawAdapter.apply — provider block', () => {
     expect(readConfig().models.mode).toBe('merge');
   });
 
-  it('writes both Gonka models with correct maxTokens', async () => {
+  it('writes all Gonka models with correct maxTokens', async () => {
     await openclawAdapter.apply(input());
     const models = readConfig().models.providers.gonka.models as Array<Record<string, any>>;
     const byId = new Map(models.map((m) => [m.id, m]));
 
-    expect(models).toHaveLength(2);
+    expect(models).toHaveLength(3);
     // :online-вариантов больше нет — веб-поиск в OpenClaw через его tools.web.
     expect(models.some((m) => String(m.id).endsWith(':online'))).toBe(false);
     expect(byId.get('moonshotai/Kimi-K2.6')?.maxTokens).toBe(8192);
     expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.maxTokens).toBe(8192);
+    expect(byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')?.maxTokens).toBe(8192);
 
     // Форма записи модели
     const kimi = byId.get('moonshotai/Kimi-K2.6')!;
@@ -142,6 +143,11 @@ describe('openclawAdapter.apply — provider block', () => {
     expect(kimi.input).toEqual(['text']);
     expect(kimi.contextWindow).toBe(200000);
     expect(kimi.cost).toEqual({ input: 0.07, output: 0.1, cacheRead: 0.07, cacheWrite: 0.07 });
+
+    // Пер-модельный контекст: DeepSeek 380K (замер 13.08.2026), не общий 200K
+    const deepseek = byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')!;
+    expect(deepseek.name).toBe('DeepSeek V4 Flash (Gonka)');
+    expect(deepseek.contextWindow).toBe(380000);
   });
 
   it('preserves the canonical casing of model ids (NOT lowercase)', async () => {
@@ -320,7 +326,7 @@ describe('openclawAdapter.apply — upsert / idempotency', () => {
     const ids = models.map((m) => m.id);
     const unique = new Set(ids);
     expect(ids).toHaveLength(unique.size);
-    expect(models).toHaveLength(2);
+    expect(models).toHaveLength(3);
   });
 
   it('is byte-identical on a second apply (idempotent)', async () => {
