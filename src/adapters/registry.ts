@@ -14,6 +14,7 @@ import { aiderAdapter } from './aider.js';
 import { kiloAdapter } from './kilo.js';
 import { rooAdapter } from './roo.js';
 import { continueAdapter } from './continue.js';
+import { hermesAdapter } from './hermes.js';
 
 /** Идентификаторы поддерживаемых инструментов. */
 export type ToolId =
@@ -24,7 +25,8 @@ export type ToolId =
   | 'aider'
   | 'kilo'
   | 'roo'
-  | 'continue';
+  | 'continue'
+  | 'hermes';
 
 /** Карта id → адаптер. */
 export const adapters: Record<ToolId, Adapter> = {
@@ -36,6 +38,7 @@ export const adapters: Record<ToolId, Adapter> = {
   kilo: kiloAdapter,
   roo: rooAdapter,
   continue: continueAdapter,
+  hermes: hermesAdapter,
 };
 
 /**

@@ -1,7 +1,7 @@
 {
   "name": "@joingonka/setup",
-  "version": "0.2.9",
-  "description": "One-command installer to point eight agentic AI coding tools (Claude Code, OpenClaw, Cline, opencode, Aider, Kilo, Roo, Continue) at JoinGonka Gateway — a cheap, OpenAI- and Anthropic-compatible API for decentralized Gonka AI inference",
+  "version": "0.3.0",
+  "description": "One-command installer to point nine agentic AI coding tools (Claude Code, OpenClaw, Cline, opencode, Aider, Kilo, Roo, Continue, Hermes) at JoinGonka Gateway — a cheap, OpenAI- and Anthropic-compatible API for decentralized Gonka AI inference",
   "type": "module",
   "bin": {
     "joingonka-setup": "./dist/cli.js"
@@ -22,9 +22,10 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "commander": "^12.0.0",
     "@inquirer/prompts": "^5.0.0",
-    "write-file-atomic": "^5.0.0"
+    "commander": "^12.0.0",
+    "write-file-atomic": "^5.0.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -41,6 +42,8 @@
     "kilo-code",
     "roo-code",
     "continue-dev",
+    "hermes-agent",
+    "nous-research",
     "anthropic",
     "anthropic-api",
     "openai-compatible",
