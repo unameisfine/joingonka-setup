@@ -5,7 +5,7 @@
 
 **One command to point your AI coding agent at the cheapest decentralized AI API.**
 
-`@joingonka/setup` configures nine agentic AI tools — Claude Code, OpenClaw, Cline, opencode, Aider, Kilo Code, Roo Code, Continue, and Hermes — to run on [JoinGonka Gateway](https://gate.joingonka.ai), an OpenAI- and Anthropic-compatible gateway for the decentralized [Gonka Network](https://gonka.ai). Inference runs on the network's own GPUs instead of a centralized provider, so flagship open models (Kimi K2.6, MiniMax M2.7, DeepSeek V4 Flash) cost roughly **100x less** than the usual cloud AI APIs — a genuinely cheap, affordable AI API for coding agents, with no metered per-seat subscription.
+`@joingonka/setup` configures 15 agentic AI tools — Claude Code, OpenClaw, Cursor, Cline, opencode, Aider, Kilo Code, Roo Code, Continue, Hermes, Pi, Zed, ZCode, JetBrains AI Assistant, and GitHub Copilot BYOK — to run on [JoinGonka Gateway](https://gate.joingonka.ai), an OpenAI- and Anthropic-compatible gateway for the decentralized [Gonka Network](https://gonka.ai). Inference runs on the network's own GPUs instead of a centralized provider, so flagship open models (Kimi K2.6, MiniMax M2.7, DeepSeek V4 Flash) cost roughly **100x less** than the usual cloud AI APIs — a genuinely cheap, affordable AI API for coding agents, with no metered per-seat subscription.
 
 ```bash
 npx @joingonka/setup
@@ -16,25 +16,31 @@ That's it. The installer asks which tool to set up and for your API key (`jg-...
 ## Why
 
 - **Cheapest flagship inference.** Decentralized GPUs + billing in GNK/USDT means a fraction of the price of centralized providers, while still serving large open models with native streaming and native tool calling.
-- **One key, nine tools.** Set up Claude Code today and Aider tomorrow with the same key and the same command, instead of a different installer per tool.
+- **One key, 15 tools.** Set up Claude Code today and Aider tomorrow with the same key and the same command, instead of a different installer per tool.
 - **No subscription lock-in.** A usage-based, bring-your-own-key alternative for anyone who has hit a metered AI coding plan's limits.
 - **Verified, not assumed.** Every run ends with a real inference call so a misconfigured endpoint fails loudly during setup, not mid-task.
 
 ## Supported tools
 
-| Tool         | Method            | Where                                           |
-|--------------|-------------------|-------------------------------------------------|
-| Claude Code  | JSON              | `~/.claude/settings.json`                       |
-| OpenClaw     | JSON              | `~/.openclaw/openclaw.json`                     |
-| opencode     | JSON              | `opencode.json` + key in native `auth.json`     |
-| Kilo Code    | JSON              | `~/.config/kilo/kilo.jsonc`                     |
-| Hermes       | YAML              | `~/.hermes/config.yaml` (key in `model.api_key`) |
-| Aider        | env variables     | prints `OPENAI_API_BASE` / `OPENAI_API_KEY`     |
-| Cline        | instructions (UI) | prints the values to enter in the UI            |
-| Roo Code     | instructions (UI) | prints the values to enter in the UI            |
-| Continue     | instructions      | YAML block for `~/.continue/config.yaml`        |
+| Tool           | Method            | Where                                              |
+|----------------|-------------------|----------------------------------------------------|
+| Claude Code    | JSON              | `~/.claude/settings.json`                          |
+| OpenClaw       | JSON              | `~/.openclaw/openclaw.json`                        |
+| opencode       | JSON              | `opencode.json` + key in native `auth.json`        |
+| Kilo Code      | JSON              | `~/.config/kilo/kilo.jsonc`                        |
+| Pi             | JSON              | `~/.pi/agent/models.json` + default in `settings.json` |
+| Zed            | JSONC             | `~/.config/zed/settings.json` (comments preserved; key via env/UI) |
+| Hermes         | YAML              | `~/.hermes/config.yaml` (key in `model.api_key`)   |
+| Aider          | env variables     | prints `OPENAI_API_BASE` / `OPENAI_API_KEY`        |
+| Cursor         | instructions (UI) | prints the values to enter in Settings → Models    |
+| Cline          | instructions (UI) | prints the values to enter in the UI               |
+| Roo Code       | instructions (UI) | prints the values to enter in the UI               |
+| Continue       | instructions      | YAML block for `~/.continue/config.yaml`           |
+| ZCode          | instructions (UI) | prints the values for Settings → Model Settings    |
+| JetBrains      | instructions (UI) | prints the values for AI Assistant providers       |
+| Copilot BYOK   | instructions (UI) | prints the values for Settings → Model Providers   |
 
-Using Cursor or another GUI-only editor the installer does not write? See the per-tool setup guides at [joingonka.ai/en/knowledge](https://joingonka.ai/en/knowledge) — the gateway works with any client that accepts a custom OpenAI- or Anthropic-compatible base URL.
+Seven tools get their config written and merged in place; the rest are GUI-only, so the installer prints exactly what to paste. Either way the run ends with a live request that proves the key, URL, and model work. Per-tool background lives in the setup guides at [joingonka.ai/en/knowledge](https://joingonka.ai/en/knowledge) — the gateway works with any client that accepts a custom OpenAI- or Anthropic-compatible base URL.
 
 ## Usage
 
@@ -54,7 +60,7 @@ JOINGONKA_API_KEY=jg-your-key npx @joingonka/setup --tool openclaw --non-interac
 
 ## Options
 
-- `--tool <claude-code|openclaw|cline|opencode|aider|kilo|roo|continue|hermes>` — which tool to configure (omit to choose interactively).
+- `--tool <claude-code|openclaw|cursor|cline|opencode|aider|kilo|roo|continue|hermes|pi|zed|zcode|jetbrains|copilot-byok>` — which tool to configure (omit to choose interactively).
 - `--scope <user|local>` — globally (`user`, default) or in the current project (`local`).
 - `--model <id|kimi|deepseek>` — model: defaults to MiniMax-M2.7, `kimi` selects Kimi K2.6, `deepseek` selects DeepSeek V4 Flash (380K context), or pass an explicit model id.
 - `--non-interactive` — no prompts; the key is taken from `JOINGONKA_API_KEY`.
