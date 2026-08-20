@@ -87,7 +87,7 @@ export interface OpenClawModelSpec {
  * Ранее заявленные 131072 были занижены. У моделей с другим контекстом
  * (DeepSeek V4 Flash — 380000) он задаётся пер-модельно в OPENCLAW_MODELS.
  */
-const OPENCLAW_CONTEXT_WINDOW = 200000;
+export const OPENCLAW_CONTEXT_WINDOW = 200000;
 
 /**
  * Единая тарификация для каталога OpenClaw ($/1M токенов).
@@ -221,4 +221,71 @@ export function kiloModelEntry(spec: OpenClawModelSpec): Record<string, unknown>
  */
 export function openclawModelRef(modelId: string): string {
   return `${OPENCLAW_PROVIDER_ID}/${modelId}`;
+}
+
+// --- Pi (https://pi.dev) — JSON ~/.pi/agent/models.json + settings.json (дефолт) ---
+
+/** Id нашего провайдера в `providers` файла models.json. */
+export const PI_PROVIDER_ID = 'joingonka';
+
+/**
+ * Транспорт провайдера для Pi. Допустимые значения `api` (док pi, 08.2026):
+ * openai-completions | openai-responses | anthropic-messages | google-generative-ai.
+ * Наш зрелый роут — /v1/chat/completions, поэтому openai-completions
+ * (baseUrl при этом С /v1 = BASE_URL_OPENAI).
+ */
+export const PI_PROVIDER_API = 'openai-completions';
+
+/**
+ * Запись модели для Pi: `{ id, name, input, contextWindow, maxTokens, cost, [reasoning] }`.
+ * Схема совпадает с каталогом OpenClaw по смыслу полей, поэтому берём тот же
+ * OpenClawModelSpec как SSOT. contextWindow/maxTokens задаём ЯВНО — дефолты Pi
+ * (128000/16384) не совпадают с реальными лимитами сети.
+ */
+export function piModelEntry(spec: OpenClawModelSpec): Record<string, unknown> {
+  const entry: Record<string, unknown> = {
+    id: spec.id,
+    name: spec.name,
+    input: ['text'],
+    contextWindow: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW,
+    maxTokens: spec.maxTokens,
+    cost: { ...OPENCLAW_COST },
+  };
+  if (spec.reasoning) entry.reasoning = true;
+  return entry;
+}
+
+// --- Zed (https://zed.dev) — JSONC ~/.config/zed/settings.json ---
+
+/**
+ * Id нашего провайдера в `language_models.openai_compatible` настроек Zed.
+ * ВАЖНО: из него Zed выводит имя env-переменной для ключа — upper snake case
+ * + `_API_KEY` (`joingonka` → `JOINGONKA_API_KEY`).
+ */
+export const ZED_PROVIDER_ID = 'joingonka';
+
+/**
+ * Имя env-переменной, откуда Zed берёт ключ нашего провайдера.
+ * Ключ в settings.json класть НЕЛЬЗЯ — док Zed прямо запрещает
+ * («Do not put API keys in settings.json»), он живёт в UI-хранилище или env.
+ */
+export const ZED_API_KEY_ENV = `${ZED_PROVIDER_ID.toUpperCase().replace(/-/g, '_')}_API_KEY`;
+
+/**
+ * Запись модели для Zed: `{ name, display_name, max_tokens, max_output_tokens,
+ * capabilities }`.
+ *
+ * ⚠️ Гоча схемы Zed: `max_tokens` — это КОНТЕКСТНОЕ окно (не потолок выдачи),
+ * а потолок выдачи — `max_output_tokens`. Перепутать = обрезанные ответы либо
+ * переполнение контекста.
+ */
+export function zedModelEntry(spec: OpenClawModelSpec): Record<string, unknown> {
+  return {
+    name: spec.id,
+    display_name: spec.name,
+    max_tokens: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW,
+    max_output_tokens: spec.maxTokens,
+    // Все модели сети умеют нативный tool calling; картинок на вход нет.
+    capabilities: { tools: true, images: false },
+  };
 }
