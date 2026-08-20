@@ -121,10 +121,13 @@ export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
   { id: 'MiniMaxAI/MiniMax-M2.7', name: 'MiniMax M2.7 (Gonka)', maxTokens: 8192, aliasFor: 'minimax-m2.7' },
   // Контекст 380000 — замерен на проде 13.08.2026 (вход 381K токенов принят,
   // SSOT model-specs.ts). Самый длинный контекст в сети Gonka.
+  // maxTokens 32768 (НЕ общие 8192): замер 17.08.2026 показал, что 8192 были не
+  // свойством модели, а единым клипом gateway — для DeepSeek клип поднят.
+  // Сверено live: GET /v1/models → top_provider.max_completion_tokens=32768.
   {
     id: 'deepseek-ai/DeepSeek-V4-Flash-0731',
     name: 'DeepSeek V4 Flash (Gonka)',
-    maxTokens: 8192,
+    maxTokens: 32768,
     aliasFor: 'deepseek-v4-flash',
     contextWindow: 380000,
     reasoning: true,

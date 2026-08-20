@@ -99,6 +99,7 @@ describe('zedAdapter.apply — provider block', () => {
     expect(byName.get('moonshotai/Kimi-K2.6')?.max_tokens).toBe(200000);
     expect(byName.get('moonshotai/Kimi-K2.6')?.max_output_tokens).toBe(8192);
     expect(byName.get('deepseek-ai/DeepSeek-V4-Flash-0731')?.max_tokens).toBe(380000);
+    expect(byName.get('deepseek-ai/DeepSeek-V4-Flash-0731')?.max_output_tokens).toBe(32768);
     expect(byName.get('MiniMaxAI/MiniMax-M2.7')?.display_name).toBe('MiniMax M2.7 (Gonka)');
     expect(byName.get('MiniMaxAI/MiniMax-M2.7')?.capabilities.tools).toBe(true);
   });
