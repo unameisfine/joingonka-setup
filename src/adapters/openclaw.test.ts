@@ -135,7 +135,9 @@ describe('openclawAdapter.apply — provider block', () => {
     expect(models.some((m) => String(m.id).endsWith(':online'))).toBe(false);
     expect(byId.get('moonshotai/Kimi-K2.6')?.maxTokens).toBe(8192);
     expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.maxTokens).toBe(8192);
-    expect(byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')?.maxTokens).toBe(8192);
+    // DeepSeek — ЕДИНСТВЕННАЯ модель сети с потолком выдачи выше общего клипа:
+    // 32768 (замер 17.08.2026, SSOT model-specs.ts + live /v1/models).
+    expect(byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')?.maxTokens).toBe(32768);
 
     // Форма записи модели
     const kimi = byId.get('moonshotai/Kimi-K2.6')!;

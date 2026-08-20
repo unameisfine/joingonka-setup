@@ -105,8 +105,9 @@ describe('piAdapter.apply — provider block', () => {
     expect(models).toHaveLength(3);
     expect(byId.get('moonshotai/Kimi-K2.6')?.contextWindow).toBe(200000);
     expect(byId.get('moonshotai/Kimi-K2.6')?.maxTokens).toBe(8192);
-    // Пер-модельный контекст DeepSeek — 380K
+    // Пер-модельный контекст DeepSeek — 380K, выдача 32768 (выше общего клипа 8192)
     expect(byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')?.contextWindow).toBe(380000);
+    expect(byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')?.maxTokens).toBe(32768);
     // reasoning-флаг только у reasoning-моделей
     expect(byId.get('moonshotai/Kimi-K2.6')?.reasoning).toBe(true);
     expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.reasoning).toBeUndefined();
