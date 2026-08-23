@@ -149,6 +149,33 @@ describe('run — model selection', () => {
     );
   });
 
+  it('hermes gets DeepSeek by default: агенту нужен длинный контекст и много раундов', async () => {
+    // Пер-инструментный дефолт: у Hermes автономный цикл с длинной историей
+    // tool-calling, DeepSeek V4 Flash даёт 380K контекста и потолок ответа 32768
+    // против 200K/8192 у остальных. Прочие инструменты остаются на DEFAULT_MODEL.
+    process.env.JOINGONKA_API_KEY = 'jg-env-key';
+    const deps = makeDeps();
+    const result = await run(
+      { tool: 'hermes', nonInteractive: true, scope: 'user' },
+      deps,
+    );
+    expect(result.result.messages.join('\n')).toContain(
+      'deepseek-ai/DeepSeek-V4-Flash-0731',
+    );
+  });
+
+  it('явный --model перекрывает пер-инструментный дефолт', async () => {
+    process.env.JOINGONKA_API_KEY = 'jg-env-key';
+    const deps = makeDeps();
+    const result = await run(
+      { tool: 'hermes', model: 'kimi', nonInteractive: true, scope: 'user' },
+      deps,
+    );
+    const out = result.result.messages.join('\n');
+    expect(out).toContain('moonshotai/Kimi-K2.6');
+    expect(out).not.toContain('DeepSeek');
+  });
+
   it('maps --model kimi to the Kimi model id', async () => {
     process.env.JOINGONKA_API_KEY = 'jg-env-key';
     const deps = makeDeps();

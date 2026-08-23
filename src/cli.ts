@@ -35,7 +35,7 @@ program
       'hermes | pi | zed | zcode | jetbrains | copilot-byok',
   )
   .option('--scope <scope>', 'Installation scope: user or local', 'user')
-  .option('--model <model>', 'Model id, or "kimi" / "deepseek" shortcuts (default: MiniMax-M2.7)')
+  .option('--model <model>', 'Model id, or "kimi" / "deepseek" shortcuts (default: MiniMax-M2.7; hermes: DeepSeek-V4-Flash)')
   .option(
     '--non-interactive',
     'Do not prompt; read the API key from JOINGONKA_API_KEY env var',
