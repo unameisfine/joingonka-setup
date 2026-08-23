@@ -33,7 +33,7 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { Document, isMap, parseDocument } from 'yaml';
-import { BASE_URL_OPENAI } from '../constants.js';
+import { BASE_URL_OPENAI, DEEPSEEK_MODEL } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
@@ -126,6 +126,10 @@ export const hermesAdapter: Adapter = {
   id: 'hermes',
   label: 'Hermes (OpenAI-compatible)',
   format: 'yaml',
+  // Hermes — автономный агент: длинная история tool-calling, память, планировщик.
+  // Ему нужнее контекст и потолок ответа, чем универсальность DEFAULT_MODEL:
+  // DeepSeek V4 Flash даёт 380K и 32768 против 200K и 8192 у остальных моделей сети.
+  defaultModel: DEEPSEEK_MODEL,
   resolvePath,
   apply,
 };

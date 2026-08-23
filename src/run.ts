@@ -46,13 +46,15 @@ export interface RunOutcome {
 
 /**
  * Разрешает значение модели:
- * - undefined / пусто → DEFAULT_MODEL;
+ * - undefined / пусто → дефолт адаптера, иначе общий DEFAULT_MODEL;
  * - 'kimi' (регистронезависимо) → KIMI_MODEL;
  * - 'deepseek' (регистронезависимо) → DEEPSEEK_MODEL;
  * - любое другое → используется как явный id модели.
+ *
+ * Явный --model всегда сильнее пер-инструментного дефолта.
  */
-function resolveModel(model?: string): string {
-  if (!model) return DEFAULT_MODEL;
+function resolveModel(model?: string, adapterDefault?: string): string {
+  if (!model) return adapterDefault ?? DEFAULT_MODEL;
   if (model.toLowerCase() === 'kimi') return KIMI_MODEL;
   if (model.toLowerCase() === 'deepseek') return DEEPSEEK_MODEL;
   return model;
@@ -94,7 +96,7 @@ export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcom
   }
 
   // 3. Модель.
-  const model = resolveModel(options.model);
+  const model = resolveModel(options.model, adapter.defaultModel);
 
   // 4. Применяем.
   const result = await adapter.apply({ apiKey, model, scope });
