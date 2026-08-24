@@ -18,4 +18,12 @@ describe('continueAdapter', () => {
     expect(text).toContain('model: moonshotai/Kimi-K2.6');
     expect(text).toContain('roles:');
   });
+
+  // Без capabilities Continue не даёт модели инструментов: modelSupportsNativeTools
+  // спрашивает PROVIDER_TOOL_SUPPORT['openai'], а тот знает только gpt-*/o*/codex*.
+  // Итог у пользователя — «режим агента не работает» (тикет #9, 24.08.2026).
+  it('YAML block declares tool_use — otherwise Continue disables agent mode', async () => {
+    const text = (await continueAdapter.apply(input)).messages.join('\n');
+    expect(text).toContain('capabilities: [tool_use]');
+  });
 });
