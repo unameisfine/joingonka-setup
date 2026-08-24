@@ -32,8 +32,12 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       `    apiBase: ${BASE_URL_OPENAI}`,
       `    apiKey: ${input.apiKey}`,
       '    roles: [chat, edit, apply]',
+      '    capabilities: [tool_use]',
       '',
       'Use a concrete model id (not AUTODETECT — it breaks the Continue CLI).',
+      '`capabilities: [tool_use]` is required for Agent mode: Continue enables tools',
+      'only for models it recognises (gpt-*, o*, codex*), so Gonka models get none',
+      'without it — the agent cannot read files and chat stays blind to the project.',
     ],
   };
 }
