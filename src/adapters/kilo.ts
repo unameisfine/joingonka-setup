@@ -5,10 +5,10 @@
  * провайдера, что opencode (`@ai-sdk/openai-compatible`):
  *   provider.joingonka = { npm, name, options:{baseURL, apiKey:"<литеральный jg-...>"},
  *                          models:{ "<id>":{ name, tool_call, [reasoning], limit } } }
- *   model (top-level) = "joingonka/moonshotai/Kimi-K2.6" — только если не задан.
+ *   model (top-level) = "joingonka/MiniMaxAI/MiniMax-M2.7" — только если не задан.
  *
  * Отличия от opencode: $schema = app.kilo.ai; модели несут `tool_call:true`
- * (Kilo требует нативный tool-calling) и `reasoning:true` для Kimi.
+ * (Kilo требует нативный tool-calling) и `reasoning:true` для reasoning-моделей.
  *
  * Пишем чистый JSON в .jsonc-файл (JSON ⊂ JSONC, Kilo прочитает). Ключ jg-... пишем
  * ЛИТЕРАЛОМ в файл (0o600, owner-only) — env не нужен (раньше была {env:GONKA_API_KEY},

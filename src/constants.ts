@@ -29,10 +29,11 @@ export const BASE_URL_OPENAI = 'https://gate.joingonka.ai/v1';
 export const DEFAULT_MODEL = 'MiniMaxAI/MiniMax-M2.7';
 
 /**
- * Альтернативная модель Kimi K2.6 — длинный контекст.
- * Выбирается через CLI `--model kimi`.
+ * Альтернативная модель GLM-5.3 Flash (Z.ai) — reasoning, контекст 390K.
+ * В сети Gonka с 16.09.2026, пришла на смену ушедшей Kimi K2.6.
+ * Выбирается через CLI `--model glm`.
  */
-export const KIMI_MODEL = 'moonshotai/Kimi-K2.6';
+export const GLM_MODEL = 'zai-org/GLM-5.3-Flash';
 
 /**
  * Альтернативная модель DeepSeek V4 Flash — контекст 380K (самый длинный в
@@ -65,7 +66,7 @@ export const OPENCLAW_PROVIDER_API = 'openai-completions';
  * Запись одной модели для каталога провайдера OpenClaw.
  *
  * id        — каноничный id модели (casing как в SSOT model-specs.ts,
- *             например `moonshotai/Kimi-K2.6` — НЕ lowercase).
+ *             например `zai-org/GLM-5.3-Flash` — НЕ lowercase).
  * name      — человекочитаемое имя в UI выбора модели OpenClaw.
  * maxTokens — потолок выдачи (совпадает с max_output из SSOT).
  * aliasFor  — короткий alias в agents.defaults.models.
@@ -82,10 +83,11 @@ export interface OpenClawModelSpec {
 }
 
 /**
- * Общий context window Kimi/MiniMax (совпадает с SSOT). 200000 — эмпирически
- * подтверждён (SSOT model-specs.ts: вход 200 011 токенов принят, HTTP 200).
- * Ранее заявленные 131072 были занижены. У моделей с другим контекстом
- * (DeepSeek V4 Flash — 380000) он задаётся пер-модельно в OPENCLAW_MODELS.
+ * Общий context window сети — контекст MiniMax (совпадает с SSOT). 200000 —
+ * эмпирически подтверждён (SSOT model-specs.ts: вход 200 011 токенов принят,
+ * HTTP 200). Ранее заявленные 131072 были занижены. У моделей с другим
+ * контекстом (DeepSeek V4 Flash — 380000, GLM-5.3 Flash — 390000) он задаётся
+ * пер-модельно в OPENCLAW_MODELS.
  */
 export const OPENCLAW_CONTEXT_WINDOW = 200000;
 
@@ -107,8 +109,8 @@ const OPENCLAW_COST = {
  * Каталог моделей, которые адаптер прописывает в OpenClaw-провайдер `gonka`.
  *
  * Базовые модели (с alias). Primary (agents.defaults.model.primary) — MiniMax-M2.7
- * (operational, через DEFAULT_MODEL); Kimi оставлена в каталоге как long-context
- * вариант (часто в outage, поэтому НЕ primary). Веб-поиск в OpenClaw — через его СОБСТВЕННЫЙ
+ * (operational, через DEFAULT_MODEL); GLM-5.3 Flash — long-context reasoning-вариант
+ * (в сети с 16.09.2026, пока 2 хоста, поэтому НЕ primary). Веб-поиск в OpenClaw — через его СОБСТВЕННЫЙ
  * встроенный tools.web (client-side); серверный web_search gateway активируется
  * per-request (plugins mode:'agent') и здесь модель-варианты не нужны.
  * SSOT по id/maxTokens — gateway/src/modules/network-status/model-specs.ts.
@@ -117,7 +119,6 @@ export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
   // maxTokens=8192 — единый потолок выдачи (max_output) всех моделей: gateway
   // клипует max_tokens до 8192 (SSOT model-specs.ts; MiniMax доказан 8192,
   // finish_reason:length). Ранее стояли заниженные 3072/4096.
-  { id: 'moonshotai/Kimi-K2.6', name: 'Kimi K2.6 (Gonka)', maxTokens: 8192, aliasFor: 'kimi-k2.6', reasoning: true },
   { id: 'MiniMaxAI/MiniMax-M2.7', name: 'MiniMax M2.7 (Gonka)', maxTokens: 8192, aliasFor: 'minimax-m2.7' },
   // Контекст 380000 — замерен на проде 13.08.2026 (вход 381K токенов принят,
   // SSOT model-specs.ts). Самый длинный контекст в сети Gonka.
@@ -130,6 +131,19 @@ export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
     maxTokens: 32768,
     aliasFor: 'deepseek-v4-flash',
     contextWindow: 380000,
+    reasoning: true,
+  },
+  // GLM-5.3 Flash (Z.ai) — в сети Gonka с 16.09.2026 взамен ушедших Kimi K2.6 и
+  // GLM-5.2-FP8. Контекст 390000 и потолок выдачи 8192 — ЗАМЕР 16.09.2026
+  // (on-chain --max-model-len 400000 слепо не копируем: публикуем доказанный минимум).
+  // Reasoning съедает несколько сотен токенов ответа: клиенту нужен max_tokens ≥ 600
+  // либо stream, для коротких задач — reasoning_effort:'low'.
+  {
+    id: 'zai-org/GLM-5.3-Flash',
+    name: 'GLM 5.3 Flash (Gonka)',
+    maxTokens: 8192,
+    aliasFor: 'glm-5.3-flash',
+    contextWindow: 390000,
     reasoning: true,
   },
 ];
@@ -206,7 +220,8 @@ export const KILO_DEFAULT_MODEL = `${KILO_PROVIDER_ID}/${DEFAULT_MODEL}`;
 /**
  * Запись модели для Kilo: `{ name, tool_call, [reasoning], limit:{context,output} }`.
  * `tool_call:true` обязателен (Kilo требует нативный tool-calling); `reasoning:true`
- * для Kimi. `limit` обязателен — иначе Kilo отключает compaction (контекст растёт).
+ * для reasoning-моделей (DeepSeek, GLM). `limit` обязателен — иначе Kilo отключает
+ * compaction (контекст растёт).
  */
 export function kiloModelEntry(spec: OpenClawModelSpec): Record<string, unknown> {
   const entry: Record<string, unknown> = {

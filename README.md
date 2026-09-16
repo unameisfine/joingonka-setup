@@ -5,7 +5,7 @@
 
 **One command to point your AI coding agent at the cheapest decentralized AI API.**
 
-`@joingonka/setup` configures 15 agentic AI tools — Claude Code, OpenClaw, Cursor, Cline, opencode, Aider, Kilo Code, Roo Code, Continue, Hermes, Pi, Zed, ZCode, JetBrains AI Assistant, and GitHub Copilot BYOK — to run on [JoinGonka Gateway](https://gate.joingonka.ai), an OpenAI- and Anthropic-compatible gateway for the decentralized [Gonka Network](https://gonka.ai). Inference runs on the network's own GPUs instead of a centralized provider, so flagship open models (Kimi K2.6, MiniMax M2.7, DeepSeek V4 Flash) cost roughly **100x less** than the usual cloud AI APIs — a genuinely cheap, affordable AI API for coding agents, with no metered per-seat subscription.
+`@joingonka/setup` configures 15 agentic AI tools — Claude Code, OpenClaw, Cursor, Cline, opencode, Aider, Kilo Code, Roo Code, Continue, Hermes, Pi, Zed, ZCode, JetBrains AI Assistant, and GitHub Copilot BYOK — to run on [JoinGonka Gateway](https://gate.joingonka.ai), an OpenAI- and Anthropic-compatible gateway for the decentralized [Gonka Network](https://gonka.ai). Inference runs on the network's own GPUs instead of a centralized provider, so flagship open models (MiniMax M2.7, DeepSeek V4 Flash, GLM 5.3 Flash) cost roughly **100x less** than the usual cloud AI APIs — a genuinely cheap, affordable AI API for coding agents, with no metered per-seat subscription.
 
 ```bash
 npx @joingonka/setup
@@ -62,7 +62,7 @@ JOINGONKA_API_KEY=jg-your-key npx @joingonka/setup --tool openclaw --non-interac
 
 - `--tool <claude-code|openclaw|cursor|cline|opencode|aider|kilo|roo|continue|hermes|pi|zed|zcode|jetbrains|copilot-byok>` — which tool to configure (omit to choose interactively).
 - `--scope <user|local>` — globally (`user`, default) or in the current project (`local`).
-- `--model <id|kimi|deepseek>` — model: defaults to MiniMax-M2.7, `kimi` selects Kimi K2.6, `deepseek` selects DeepSeek V4 Flash (380K context), or pass an explicit model id.
+- `--model <id|glm|deepseek>` — model: defaults to MiniMax-M2.7, `glm` selects GLM 5.3 Flash (390K context, reasoning), `deepseek` selects DeepSeek V4 Flash (380K context), or pass an explicit model id.
 - `--non-interactive` — no prompts; the key is taken from `JOINGONKA_API_KEY`.
 - `--no-verify` — skip the live check after configuration.
 

@@ -133,41 +133,49 @@ describe('openclawAdapter.apply — provider block', () => {
     expect(models).toHaveLength(3);
     // :online-вариантов больше нет — веб-поиск в OpenClaw через его tools.web.
     expect(models.some((m) => String(m.id).endsWith(':online'))).toBe(false);
-    expect(byId.get('moonshotai/Kimi-K2.6')?.maxTokens).toBe(8192);
     expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.maxTokens).toBe(8192);
+    expect(byId.get('zai-org/GLM-5.3-Flash')?.maxTokens).toBe(8192);
     // DeepSeek — ЕДИНСТВЕННАЯ модель сети с потолком выдачи выше общего клипа:
     // 32768 (замер 17.08.2026, SSOT model-specs.ts + live /v1/models).
     expect(byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')?.maxTokens).toBe(32768);
 
-    // Форма записи модели
-    const kimi = byId.get('moonshotai/Kimi-K2.6')!;
-    expect(kimi.name).toBe('Kimi K2.6 (Gonka)');
-    expect(kimi.input).toEqual(['text']);
-    expect(kimi.contextWindow).toBe(200000);
-    expect(kimi.cost).toEqual({ input: 0.07, output: 0.1, cacheRead: 0.07, cacheWrite: 0.07 });
+    // Форма записи модели + общий контекст сети (200K) на примере MiniMax
+    const minimax = byId.get('MiniMaxAI/MiniMax-M2.7')!;
+    expect(minimax.name).toBe('MiniMax M2.7 (Gonka)');
+    expect(minimax.input).toEqual(['text']);
+    expect(minimax.contextWindow).toBe(200000);
+    expect(minimax.cost).toEqual({ input: 0.07, output: 0.1, cacheRead: 0.07, cacheWrite: 0.07 });
 
     // Пер-модельный контекст: DeepSeek 380K (замер 13.08.2026), не общий 200K
     const deepseek = byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')!;
     expect(deepseek.name).toBe('DeepSeek V4 Flash (Gonka)');
     expect(deepseek.contextWindow).toBe(380000);
+
+    // GLM-5.3 Flash (в сети с 16.09.2026): контекст 390K, потолок выдачи 8192 — замер
+    const glm = byId.get('zai-org/GLM-5.3-Flash')!;
+    expect(glm.name).toBe('GLM 5.3 Flash (Gonka)');
+    expect(glm.contextWindow).toBe(390000);
   });
 
   it('preserves the canonical casing of model ids (NOT lowercase)', async () => {
     await openclawAdapter.apply(input());
     const ids = (readConfig().models.providers.gonka.models as Array<{ id: string }>).map((m) => m.id);
-    expect(ids).toContain('moonshotai/Kimi-K2.6');
-    expect(ids).not.toContain('moonshotai/kimi-k2.6');
+    expect(ids).toContain('zai-org/GLM-5.3-Flash');
+    expect(ids).not.toContain('zai-org/glm-5.3-flash');
   });
 });
 
 describe('openclawAdapter.apply — agents defaults', () => {
-  it('sets primary to gonka/MiniMaxAI/MiniMax-M2.7 and registers 2 aliases', async () => {
+  it('sets primary to gonka/MiniMaxAI/MiniMax-M2.7 and registers an alias per model', async () => {
     await openclawAdapter.apply(input());
     const defaults = readConfig().agents.defaults;
 
     expect(defaults.model.primary).toBe('gonka/MiniMaxAI/MiniMax-M2.7');
-    expect(defaults.models['gonka/moonshotai/Kimi-K2.6']).toEqual({ alias: 'kimi-k2.6' });
     expect(defaults.models['gonka/MiniMaxAI/MiniMax-M2.7']).toEqual({ alias: 'minimax-m2.7' });
+    expect(defaults.models['gonka/deepseek-ai/DeepSeek-V4-Flash-0731']).toEqual({
+      alias: 'deepseek-v4-flash',
+    });
+    expect(defaults.models['gonka/zai-org/GLM-5.3-Flash']).toEqual({ alias: 'glm-5.3-flash' });
   });
 });
 
@@ -243,7 +251,7 @@ describe('openclawAdapter.apply — deep merge (do not clobber foreign data)', (
 
     const models = readConfig().agents.defaults.models;
     expect(models['openai/gpt-5.4']).toEqual({ alias: 'gpt' });
-    expect(models['gonka/moonshotai/Kimi-K2.6']).toEqual({ alias: 'kimi-k2.6' });
+    expect(models['gonka/zai-org/GLM-5.3-Flash']).toEqual({ alias: 'glm-5.3-flash' });
   });
 
   it('does NOT overwrite a user-set primary', async () => {
@@ -274,7 +282,7 @@ describe('openclawAdapter.apply — deep merge (do not clobber foreign data)', (
     expect(readConfig().agents.defaults.model.primary).toBe('gonka/MiniMaxAI/MiniMax-M2.7');
   });
 
-  it('убирает устаревшую модель (Qwen) из каталога, алиасов и primary на повторном apply', async () => {
+  it('убирает ушедшие модели (Qwen, Kimi) из каталога, алиасов и primary на повторном apply', async () => {
     const dir = join(tmpDir, '.openclaw');
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -285,16 +293,18 @@ describe('openclawAdapter.apply — deep merge (do not clobber foreign data)', (
             gonka: {
               models: [
                 { id: 'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8', name: 'Qwen (old)' },
-                { id: 'moonshotai/Kimi-K2.6', name: 'stale' },
+                // Kimi K2.6 ушла из сети 09.2026 — осталась от прошлого запуска установщика
+                { id: 'moonshotai/Kimi-K2.6', name: 'Kimi K2.6 (Gonka)' },
               ],
             },
           },
         },
         agents: {
           defaults: {
-            model: { primary: 'gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8' },
+            model: { primary: 'gonka/moonshotai/Kimi-K2.6' },
             models: {
               'gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8': { alias: 'qwen' },
+              'gonka/moonshotai/Kimi-K2.6': { alias: 'kimi-k2.6' },
               'openai/gpt-5.4': { alias: 'gpt' },
             },
           },
@@ -307,15 +317,17 @@ describe('openclawAdapter.apply — deep merge (do not clobber foreign data)', (
     const cfg = readConfig();
     const ids = cfg.models.providers.gonka.models.map((m: any) => m.id);
     expect(ids).not.toContain('Qwen/Qwen3-235B-A22B-Instruct-2507-FP8'); // убрана из каталога
-    expect(ids).toContain('moonshotai/Kimi-K2.6');
+    expect(ids).not.toContain('moonshotai/Kimi-K2.6'); // ушедшая из сети Kimi — тоже
     expect(ids).toContain('MiniMaxAI/MiniMax-M2.7');
+    expect(ids).toContain('zai-org/GLM-5.3-Flash');
 
     const aliases = cfg.agents.defaults.models;
     expect(aliases['gonka/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toBeUndefined(); // наш устаревший алиас убран
+    expect(aliases['gonka/moonshotai/Kimi-K2.6']).toBeUndefined(); // и алиас ушедшей Kimi
     expect(aliases['openai/gpt-5.4']).toEqual({ alias: 'gpt' }); // чужой алиас цел
-    expect(aliases['gonka/moonshotai/Kimi-K2.6']).toEqual({ alias: 'kimi-k2.6' });
+    expect(aliases['gonka/zai-org/GLM-5.3-Flash']).toEqual({ alias: 'glm-5.3-flash' });
 
-    expect(cfg.agents.defaults.model.primary).toBe('gonka/MiniMaxAI/MiniMax-M2.7'); // primary на Qwen → сброшен
+    expect(cfg.agents.defaults.model.primary).toBe('gonka/MiniMaxAI/MiniMax-M2.7'); // primary на ушедшую Kimi → сброшен
   });
 });
 

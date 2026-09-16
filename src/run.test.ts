@@ -168,21 +168,21 @@ describe('run — model selection', () => {
     process.env.JOINGONKA_API_KEY = 'jg-env-key';
     const deps = makeDeps();
     const result = await run(
-      { tool: 'hermes', model: 'kimi', nonInteractive: true, scope: 'user' },
+      { tool: 'hermes', model: 'glm', nonInteractive: true, scope: 'user' },
       deps,
     );
     const out = result.result.messages.join('\n');
-    expect(out).toContain('moonshotai/Kimi-K2.6');
+    expect(out).toContain('zai-org/GLM-5.3-Flash');
     expect(out).not.toContain('DeepSeek');
   });
 
-  it('maps --model kimi to the Kimi model id', async () => {
+  it('maps --model glm to the GLM model id', async () => {
     process.env.JOINGONKA_API_KEY = 'jg-env-key';
     const deps = makeDeps();
     const result = await run(
-      { tool: 'cline', model: 'kimi', nonInteractive: true, scope: 'user' },
+      { tool: 'cline', model: 'glm', nonInteractive: true, scope: 'user' },
       deps,
     );
-    expect(result.result.messages.join('\n')).toContain('moonshotai/Kimi-K2.6');
+    expect(result.result.messages.join('\n')).toContain('zai-org/GLM-5.3-Flash');
   });
 });

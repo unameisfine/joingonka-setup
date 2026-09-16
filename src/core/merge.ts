@@ -119,7 +119,7 @@ export function upsertById(array: unknown[], item: JsonObject & { id: string }):
  * - начинается, но `modelId` есть в каталоге (актуальная наша) → false;
  * - начинается и `modelId` вне каталога (наша устаревшая) → true.
  *
- * `modelId` может сам содержать `/` (напр. `moonshotai/Kimi-K2.6`) — берём весь
+ * `modelId` может сам содержать `/` (напр. `zai-org/GLM-5.3-Flash`) — берём весь
  * остаток после первого `<providerId>/`.
  */
 export function isStaleProviderModelRef(

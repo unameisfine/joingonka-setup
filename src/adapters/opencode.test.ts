@@ -74,9 +74,9 @@ describe('opencodeAdapter.apply — provider block (opencode.json)', () => {
   it('writes models with limit.output matching SSOT caps (both 8192)', async () => {
     await opencodeAdapter.apply(input());
     const models = readConfig().provider.joingonka.models;
-    expect(models['moonshotai/Kimi-K2.6'].limit.output).toBe(8192);
+    expect(models['zai-org/GLM-5.3-Flash'].limit.output).toBe(8192);
     expect(models['MiniMaxAI/MiniMax-M2.7'].limit.output).toBe(8192);
-    expect(models['moonshotai/Kimi-K2.6'].limit.context).toBeGreaterThan(0);
+    expect(models['zai-org/GLM-5.3-Flash'].limit.context).toBe(390000);
   });
 
   it('sets $schema and default top-level model (MiniMax) when absent', async () => {
@@ -114,7 +114,7 @@ describe('opencodeAdapter.apply — merge-aware', () => {
     expect(cfg.model).toBe('anthropic/claude-x'); // пользовательский model не перезаписан
   });
 
-  it('убирает устаревшую модель (Qwen) из каталога и сбрасывает наш устаревший дефолт', async () => {
+  it('убирает ушедшие модели (Qwen, Kimi) из каталога и сбрасывает наш устаревший дефолт', async () => {
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(
       configPath,
@@ -124,7 +124,7 @@ describe('opencodeAdapter.apply — merge-aware', () => {
           joingonka: {
             models: {
               'Qwen/Qwen3-235B-A22B-Instruct-2507-FP8': { name: 'Qwen (old)' },
-              'moonshotai/Kimi-K2.6': { name: 'stale name' },
+              'moonshotai/Kimi-K2.6': { name: 'Kimi K2.6 (Gonka)' },
             },
           },
         },
@@ -134,8 +134,9 @@ describe('opencodeAdapter.apply — merge-aware', () => {
     const cfg = readConfig();
     const models = cfg.provider.joingonka.models;
     expect(models['Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toBeUndefined(); // убрана
-    expect(models['moonshotai/Kimi-K2.6']).toBeTruthy(); // актуальная есть
+    expect(models['moonshotai/Kimi-K2.6']).toBeUndefined(); // ушедшая из сети Kimi — тоже
     expect(models['MiniMaxAI/MiniMax-M2.7']).toBeTruthy();
+    expect(models['zai-org/GLM-5.3-Flash']).toBeTruthy(); // актуальная есть
     expect(cfg.model).toBe('joingonka/MiniMaxAI/MiniMax-M2.7'); // дефолт на Qwen → сброшен
   });
 

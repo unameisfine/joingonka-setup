@@ -4,13 +4,13 @@
  * Склеивает шаги, не зная деталей конкретных инструментов:
  *   1. выбрать инструмент (явный --tool или интерактивный select);
  *   2. получить API-ключ (из env в non-interactive, иначе password-промпт);
- *   3. определить модель (default / kimi / явный id);
+ *   3. определить модель (default / шорткат glm|deepseek / явный id);
  *   4. вызвать adapter.apply().
  *
  * Промпты инъектируются через deps — это делает оркестратор полностью
  * тестируемым (spy-функции) и отвязывает его от @inquirer/prompts.
  */
-import { DEFAULT_MODEL, DEEPSEEK_MODEL, KIMI_MODEL } from './constants.js';
+import { DEFAULT_MODEL, DEEPSEEK_MODEL, GLM_MODEL } from './constants.js';
 import { validateApiKey } from './core/validate.js';
 import { getAdapter, listTools } from './adapters/registry.js';
 import type { ApplyResult, Scope } from './adapters/types.js';
@@ -22,7 +22,7 @@ export interface RunOptions {
   tool?: string;
   /** 'user' (глобально) или 'local' (в проекте). По умолчанию 'user'. */
   scope?: Scope;
-  /** Модель: undefined → default; 'kimi' → Kimi; иначе трактуется как явный id. */
+  /** Модель: undefined → default; 'glm'/'deepseek' → шорткаты; иначе явный id. */
   model?: string;
   /** Неинтерактивный режим: ключ берётся из env, промпты запрещены. */
   nonInteractive?: boolean;
@@ -47,7 +47,7 @@ export interface RunOutcome {
 /**
  * Разрешает значение модели:
  * - undefined / пусто → дефолт адаптера, иначе общий DEFAULT_MODEL;
- * - 'kimi' (регистронезависимо) → KIMI_MODEL;
+ * - 'glm' (регистронезависимо) → GLM_MODEL;
  * - 'deepseek' (регистронезависимо) → DEEPSEEK_MODEL;
  * - любое другое → используется как явный id модели.
  *
@@ -55,7 +55,7 @@ export interface RunOutcome {
  */
 function resolveModel(model?: string, adapterDefault?: string): string {
   if (!model) return adapterDefault ?? DEFAULT_MODEL;
-  if (model.toLowerCase() === 'kimi') return KIMI_MODEL;
+  if (model.toLowerCase() === 'glm') return GLM_MODEL;
   if (model.toLowerCase() === 'deepseek') return DEEPSEEK_MODEL;
   return model;
 }

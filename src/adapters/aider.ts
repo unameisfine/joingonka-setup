@@ -8,7 +8,7 @@
  * Адаптер ничего не пишет, а возвращает инструкции. ВЕДЁМ с нативного конфига
  * (без глобального env); env-вариант — лишь как разовая сессия:
  *   .aider.conf.yml: openai-api-base / openai-api-key / model
- *   aider --model openai/moonshotai/Kimi-K2.6
+ *   aider --model openai/MiniMaxAI/MiniMax-M2.7
  *
  * ⚠️ Имя модели — С префиксом `openai/` (litellm-маршрутизация на OpenAI-
  *   совместимого провайдера; без него Aider не поймёт endpoint).

@@ -35,12 +35,13 @@ describe('kiloAdapter.apply', () => {
     expect(JSON.stringify(readConfig()).includes('jg-test123')).toBe(true);
   });
 
-  it('models carry tool_call + limit, Kimi carries reasoning', async () => {
+  it('models carry tool_call + limit, GLM carries reasoning', async () => {
     await kiloAdapter.apply(input);
     const models = readConfig().provider.joingonka.models;
-    expect(models['moonshotai/Kimi-K2.6'].tool_call).toBe(true);
-    expect(models['moonshotai/Kimi-K2.6'].reasoning).toBe(true);
-    expect(models['moonshotai/Kimi-K2.6'].limit.output).toBe(8192);
+    expect(models['zai-org/GLM-5.3-Flash'].tool_call).toBe(true);
+    expect(models['zai-org/GLM-5.3-Flash'].reasoning).toBe(true);
+    expect(models['zai-org/GLM-5.3-Flash'].limit.output).toBe(8192);
+    expect(models['zai-org/GLM-5.3-Flash'].limit.context).toBe(390000);
     expect(models['MiniMaxAI/MiniMax-M2.7'].reasoning).toBeUndefined();
   });
 
@@ -60,7 +61,7 @@ describe('kiloAdapter.apply', () => {
     const cfg = readConfig();
     const models = cfg.provider.joingonka.models;
     expect(models['Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toBeUndefined(); // убрана
-    expect(models['moonshotai/Kimi-K2.6']).toBeTruthy();
+    expect(models['zai-org/GLM-5.3-Flash']).toBeTruthy();
     expect(models['MiniMaxAI/MiniMax-M2.7']).toBeTruthy();
     expect(cfg.model).toBe('joingonka/MiniMaxAI/MiniMax-M2.7'); // дефолт на Qwen → сброшен
   });

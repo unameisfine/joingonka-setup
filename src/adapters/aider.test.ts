@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { aiderAdapter } from './aider.js';
 
-const input = { apiKey: 'jg-test123', model: 'moonshotai/Kimi-K2.6', scope: 'user' as const };
+const input = { apiKey: 'jg-test123', model: 'zai-org/GLM-5.3-Flash', scope: 'user' as const };
 
 describe('aiderAdapter', () => {
   it('does not write a file (resolvePath null, wrote false)', async () => {
@@ -20,7 +20,7 @@ describe('aiderAdapter', () => {
 
   it('model gets the mandatory openai/ prefix (litellm routing)', async () => {
     const text = (await aiderAdapter.apply(input)).messages.join('\n');
-    expect(text).toContain('aider --model openai/moonshotai/Kimi-K2.6');
+    expect(text).toContain('aider --model openai/zai-org/GLM-5.3-Flash');
   });
 
   it('uses OpenAI verify mode', () => {

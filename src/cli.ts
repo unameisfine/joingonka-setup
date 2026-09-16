@@ -11,6 +11,7 @@
  * JOINGONKA_API_KEY. Аргумент командной строки попал бы в историю shell
  * и в список процессов — это утечка секрета.
  */
+import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { run } from './run.js';
 import { askApiKey, askTool } from './core/prompt.js';
@@ -24,18 +25,28 @@ interface CliOptions {
   verify?: boolean;
 }
 
+/**
+ * Версия для `--version` читается из package.json, а НЕ дублируется литералом:
+ * литерал уже разъезжался с реальной версией пакета (застрял на 0.4.0 к релизу
+ * 0.4.3). Путь верен и из dist/cli.js, и из src/cli.ts — package.json лежит на
+ * уровень выше обоих, и npm всегда кладёт его в тарбол.
+ */
+const pkgVersion = (
+  createRequire(import.meta.url)('../package.json') as { version: string }
+).version;
+
 const program = new Command();
 program
   .name('joingonka-setup')
   .description('Point an agentic AI tool at JoinGonka Gateway (15 tools supported)')
-  .version('0.4.0')
+  .version(pkgVersion)
   .option(
     '--tool <tool>',
     'Tool: claude-code | openclaw | cursor | cline | opencode | aider | kilo | roo | continue | ' +
       'hermes | pi | zed | zcode | jetbrains | copilot-byok',
   )
   .option('--scope <scope>', 'Installation scope: user or local', 'user')
-  .option('--model <model>', 'Model id, or "kimi" / "deepseek" shortcuts (default: MiniMax-M2.7; hermes: DeepSeek-V4-Flash)')
+  .option('--model <model>', 'Model id, or "glm" / "deepseek" shortcuts (default: MiniMax-M2.7; hermes: DeepSeek-V4-Flash)')
   .option(
     '--non-interactive',
     'Do not prompt; read the API key from JOINGONKA_API_KEY env var',

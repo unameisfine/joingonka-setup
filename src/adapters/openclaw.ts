@@ -13,7 +13,7 @@
  *     models: [ актуальные модели каталога Gonka ]
  *   }
  *   (поле `auth` НЕ пишем — как GonkaGate в OpenAI-режиме)
- *   agents.defaults.model.primary = "gonka/moonshotai/Kimi-K2.6" (только если не задан)
+ *   agents.defaults.model.primary = "gonka/MiniMaxAI/MiniMax-M2.7" (только если не задан)
  *   agents.defaults.models[<ref>] = { alias } для моделей каталога
  *
  * Ключ: пишем РЕАЛЬНЫЙ jg-... литералом прямо в конфиг (файл 0o600, owner-only) —
