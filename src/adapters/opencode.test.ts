@@ -12,27 +12,40 @@ import { join, dirname } from 'node:path';
 import { opencodeAdapter, opencodePaths } from './opencode.js';
 import { OPENCODE_DEFAULT_MODEL, DEEPSEEK_MODEL, GLM_MODEL } from '../constants.js';
 
+// HOME и XDG_* тоже в песочнице: адаптер смотрит на ВСЕ глобальные файлы opencode
+// (в том числе чтобы привести в порядок свой прежний блок в файле ниже по
+// приоритету) — настоящий ~/.config/opencode разработчика тесты видеть не должны.
+const ENV_KEYS = [
+  'HOME',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'OPENCODE_CONFIG',
+  'OPENCODE_AUTH_JSON',
+] as const;
+
 let tmpDir: string;
 let configPath: string;
 let authPath: string;
-let origConfigEnv: string | undefined;
-let origAuthEnv: string | undefined;
+const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'joingonka-opencode-'));
   configPath = join(tmpDir, 'opencode.json');
   authPath = join(tmpDir, 'auth.json');
-  origConfigEnv = process.env.OPENCODE_CONFIG;
-  origAuthEnv = process.env.OPENCODE_AUTH_JSON;
+  for (const key of ENV_KEYS) {
+    savedEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+  process.env.HOME = join(tmpDir, 'home');
   process.env.OPENCODE_CONFIG = configPath;
   process.env.OPENCODE_AUTH_JSON = authPath;
 });
 
 afterEach(() => {
-  if (origConfigEnv === undefined) delete process.env.OPENCODE_CONFIG;
-  else process.env.OPENCODE_CONFIG = origConfigEnv;
-  if (origAuthEnv === undefined) delete process.env.OPENCODE_AUTH_JSON;
-  else process.env.OPENCODE_AUTH_JSON = origAuthEnv;
+  for (const key of ENV_KEYS) {
+    if (savedEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = savedEnv[key];
+  }
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -51,16 +64,10 @@ describe('opencodeAdapter.resolvePath', () => {
     expect(opencodeAdapter.resolvePath('user')).toBe(configPath);
   });
   it('defaults to ~/.config/opencode/opencode.json', () => {
+    // XDG_CONFIG_HOME машины разработчика на проверку дефолта не влияет: beforeEach
+    // снимает его вместе с остальным окружением.
     delete process.env.OPENCODE_CONFIG;
-    // XDG_CONFIG_HOME машины разработчика не должен влиять на проверку дефолта.
-    const xdg = process.env.XDG_CONFIG_HOME;
-    delete process.env.XDG_CONFIG_HOME;
-    try {
-      expect(opencodeAdapter.resolvePath('user')).toMatch(/\.config\/opencode\/opencode\.json$/);
-    } finally {
-      if (xdg !== undefined) process.env.XDG_CONFIG_HOME = xdg;
-      process.env.OPENCODE_CONFIG = configPath;
-    }
+    expect(opencodeAdapter.resolvePath('user')).toMatch(/\.config\/opencode\/opencode\.json$/);
   });
 });
 
@@ -342,5 +349,172 @@ describe('opencodeAdapter.apply — неожиданная форма узла (
     expect(readFileSync(configPath, 'utf-8')).toBe('{ "theme": "tokyonight" }');
     expect(readFileSync(authPath, 'utf-8')).toBe(auth);
     expect(files()).toEqual(['auth.json', 'opencode.json']);
+  });
+});
+
+describe('opencodeAdapter — какой глобальный файл читает opencode (0.5.0)', () => {
+  // ★ Находка аудита. opencode сливает ТРИ глобальных файла по возрастанию
+  // приоритета: config.json → opencode.json → opencode.jsonc (config.ts, loadGlobal;
+  // сверено 21.09.2026), а с 12.05.2026 сам создаёт opencode.jsonc при первом
+  // старте. Установщик всегда писал в opencode.json — и `model` из файла выше
+  // молча перекрывала наш `--model`.
+  const KIMI = 'joingonka/moonshotai/Kimi-K2.6';
+  let globalDir: string;
+  const file = (name: string) => join(globalDir, name);
+  const seed = (name: string, value: unknown) =>
+    writeFileSync(file(name), typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+  const read = (name: string): any =>
+    JSON.parse(readFileSync(file(name), 'utf-8').replace(/^\s*\/\/.*$/gm, ''));
+  const backupsOf = (name: string) =>
+    readdirSync(globalDir).filter((f) => f.startsWith(`${name}.bak.`));
+
+  beforeEach(() => {
+    // Без OPENCODE_CONFIG адаптер работает с настоящей раскладкой каталога
+    // (HOME — в песочнице, см. общий beforeEach).
+    delete process.env.OPENCODE_CONFIG;
+    globalDir = join(process.env.HOME!, '.config', 'opencode');
+    mkdirSync(globalDir, { recursive: true });
+  });
+
+  it('creates opencode.json — the documented file — when there is no global config yet', async () => {
+    const result = await opencodeAdapter.apply(input());
+    expect(result.configPath).toBe(file('opencode.json'));
+    expect(read('opencode.json').provider.joingonka).toBeTruthy();
+    expect(readdirSync(globalDir)).toEqual(['opencode.json']);
+  });
+
+  it('writes into opencode.jsonc when the tool has already created it', async () => {
+    seed('opencode.jsonc', '{\n  // создан opencode при первом старте\n  "$schema": "https://opencode.ai/config.json"\n}\n');
+
+    const result = await opencodeAdapter.apply(input());
+
+    expect(result.configPath).toBe(file('opencode.jsonc'));
+    expect(opencodeAdapter.resolvePath('user')).toBe(file('opencode.jsonc'));
+    expect(read('opencode.jsonc').provider.joingonka.options.baseURL).toBe('https://gate.joingonka.ai/v1');
+    expect(readFileSync(file('opencode.jsonc'), 'utf-8')).toContain('// создан opencode при первом старте');
+    // Второй конфиг рядом не заводим.
+    expect(readdirSync(globalDir).filter((f) => !f.includes('.bak.'))).toEqual(['opencode.jsonc']);
+  });
+
+  it('makes an explicit --model effective even when a higher-priority file pins another model', async () => {
+    seed('opencode.jsonc', '{\n  // мой выбор\n  "model": "anthropic/claude-opus-5"\n}\n');
+    seed('opencode.json', { model: OPENCODE_DEFAULT_MODEL, provider: { joingonka: { name: 'old' } } });
+
+    const result = await opencodeAdapter.apply({ ...input({ model: GLM_MODEL }), modelExplicit: true });
+
+    // Действует значение из файла, который opencode грузит ПОСЛЕДНИМ.
+    expect(read('opencode.jsonc').model).toBe(`joingonka/${GLM_MODEL}`);
+    expect(readFileSync(file('opencode.jsonc'), 'utf-8')).toContain('// мой выбор');
+    expect(result.messages.join('\n')).toContain(`Default model: joingonka/${GLM_MODEL}`);
+  });
+
+  it("respects the user's model from a lower-priority file instead of pinning our default above it", async () => {
+    seed('opencode.jsonc', { $schema: 'https://opencode.ai/config.json' });
+    seed('config.json', { model: 'anthropic/claude-opus-5' });
+
+    const result = await opencodeAdapter.apply(input());
+
+    expect(read('opencode.jsonc').model).toBeUndefined();
+    expect(read('opencode.jsonc').provider.joingonka).toBeTruthy();
+    expect(result.messages.join('\n')).toContain('Default model: anthropic/claude-opus-5');
+    // В файле ниже нашего ничего нет — он не тронут и не забэкаплен.
+    expect(read('config.json')).toEqual({ model: 'anthropic/claude-opus-5' });
+    expect(backupsOf('config.json')).toHaveLength(0);
+  });
+
+  it('refreshes the provider block an earlier installer left in a lower-priority file', async () => {
+    // opencode сливает каталоги моделей из всех файлов: без чистки ушедшая Kimi
+    // вернулась бы в список из старого opencode.json.
+    seed('opencode.jsonc', { $schema: 'https://opencode.ai/config.json' });
+    seed('opencode.json', {
+      model: KIMI,
+      small_model: KIMI,
+      theme: 'dark',
+      provider: {
+        anthropic: { name: 'A' },
+        joingonka: {
+          npm: '@ai-sdk/openai-compatible',
+          options: { baseURL: 'https://gate.joingonka.ai/v1', timeout: 600000 },
+          models: { 'moonshotai/Kimi-K2.6': { name: 'Kimi K2.6 (Gonka)' } },
+        },
+      },
+    });
+
+    const result = await opencodeAdapter.apply(input());
+
+    const lower = read('opencode.json');
+    expect(Object.keys(lower.provider.joingonka.models)).toEqual([
+      'MiniMaxAI/MiniMax-M2.7',
+      DEEPSEEK_MODEL,
+      GLM_MODEL,
+    ]);
+    expect(lower.model).toBe(OPENCODE_DEFAULT_MODEL);
+    expect(lower.small_model).toBe(OPENCODE_DEFAULT_MODEL);
+    // Чужое и пользовательские поля нашего блока целы.
+    expect(lower.theme).toBe('dark');
+    expect(lower.provider.anthropic).toEqual({ name: 'A' });
+    expect(lower.provider.joingonka.options.timeout).toBe(600000);
+    expect(readFileSync(file('opencode.json'), 'utf-8')).not.toContain('Kimi');
+    expect(backupsOf('opencode.json')).toHaveLength(1);
+
+    // Целевой файл получил полный блок и действующий дефолт.
+    expect(read('opencode.jsonc').model).toBe(OPENCODE_DEFAULT_MODEL);
+    expect(read('opencode.jsonc').provider.joingonka.models[GLM_MODEL]).toBeTruthy();
+
+    const text = result.messages.join('\n');
+    expect(text).toContain(file('opencode.json'));
+    expect(text).toMatch(/2 references.*no longer served/i);
+  });
+
+  it('is idempotent across both files: no rewrite and no new backup of the lower one', async () => {
+    seed('opencode.jsonc', { $schema: 'https://opencode.ai/config.json' });
+    seed('opencode.json', { provider: { joingonka: { models: { 'moonshotai/Kimi-K2.6': {} } } } });
+
+    await opencodeAdapter.apply(input());
+    const first = [readFileSync(file('opencode.jsonc'), 'utf-8'), readFileSync(file('opencode.json'), 'utf-8')];
+    await opencodeAdapter.apply(input());
+
+    expect(readFileSync(file('opencode.jsonc'), 'utf-8')).toBe(first[0]);
+    expect(readFileSync(file('opencode.json'), 'utf-8')).toBe(first[1]);
+    expect(backupsOf('opencode.json')).toHaveLength(1);
+  });
+
+  it('leaves an unparsable lower-priority file alone and says so', async () => {
+    seed('opencode.jsonc', { $schema: 'https://opencode.ai/config.json' });
+    seed('config.json', '{ broken');
+
+    const result = await opencodeAdapter.apply(input());
+
+    expect(readFileSync(file('config.json'), 'utf-8')).toBe('{ broken');
+    expect(backupsOf('config.json')).toHaveLength(0);
+    expect(read('opencode.jsonc').provider.joingonka).toBeTruthy();
+    expect(result.messages.join('\n')).toMatch(/config\.json.*could not be parsed/);
+  });
+
+  it('refuses as a whole when a lower file blocks the edit: nothing is written anywhere', async () => {
+    seed('opencode.jsonc', { $schema: 'https://opencode.ai/config.json' });
+    const lowerText = JSON.stringify({ provider: { joingonka: { options: 'oops' } } });
+    seed('opencode.json', lowerText);
+    const targetBefore = readFileSync(file('opencode.jsonc'), 'utf-8');
+
+    await expect(opencodeAdapter.apply(input())).rejects.toThrow(/opencode\.json.*Nothing was written/s);
+
+    expect(readFileSync(file('opencode.jsonc'), 'utf-8')).toBe(targetBefore);
+    expect(readFileSync(file('opencode.json'), 'utf-8')).toBe(lowerText);
+    expect(readdirSync(globalDir).filter((f) => f.includes('.bak.'))).toHaveLength(0);
+    expect(() => readFileSync(authPath, 'utf-8')).toThrow();
+  });
+
+  it('treats OPENCODE_CONFIG as the top layer: global files are below it', async () => {
+    process.env.OPENCODE_CONFIG = configPath;
+    seed('opencode.jsonc', { model: 'anthropic/claude-opus-5' });
+
+    const result = await opencodeAdapter.apply(input());
+
+    expect(result.configPath).toBe(configPath);
+    expect(readConfig().provider.joingonka).toBeTruthy();
+    // Выбор пользователя из глобального файла уважаем — свой дефолт поверх не ставим.
+    expect(readConfig().model).toBeUndefined();
+    expect(read('opencode.jsonc')).toEqual({ model: 'anthropic/claude-opus-5' });
   });
 });

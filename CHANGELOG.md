@@ -6,6 +6,81 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Dates are npm publish dates (UTC).
 
+## [0.5.0] - 2026-09-21
+
+Ten more tools — 25 in total — and a round of fixes found while integrating them.
+
+### Added
+
+- **Codex CLI** (`--tool codex`) — `~/.codex/config.toml`: a `[model_providers.joingonka]`
+  table over the Responses API, the default `model` / `model_provider` and the real
+  `model_context_window`. The key is written literally as `experimental_bearer_token`
+  (file mode `600`) — the only Codex setting that can hold one; Codex marks the field
+  experimental, and the README says plainly what that means. The Codex IDE extension
+  reads the same file.
+- **Kimi Code CLI** (`--tool kimi-code`) — `~/.kimi-code/config.toml`: the provider with
+  `api_key`, one `[models."joingonka/…"]` table per model with real limits and
+  capabilities, `default_model`; references to retired models are cleaned up,
+  `[secondary_model]` included.
+- **omp / Oh My Pi** (`--tool omp`) — `~/.omp/agent/models.yml` plus `modelRoles.default`
+  in `config.yml`, with live prices; omp's own `models.json` → `models.yml` and
+  `settings.json` → `config.yml` migrations are not pre-empted.
+- **MiniMax Code** (`--tool minimax-code`) — `~/.minimax/config.yaml`: a BYOK provider
+  under `custom_provider`, exactly what `mcode provider add` writes.
+- **Goose** (`--tool goose`) — a declarative provider in `custom_providers/` and the
+  default provider and model in `config.yaml`. The key goes to `secrets.yaml` only
+  when Goose uses its file-based secret store; otherwise the installer says that one
+  `goose configure` step is left instead of switching your keyring off.
+- **MiMo Code** (`--tool mimo-code`) — `mimocode.jsonc` plus the key in the native
+  `auth.json`, the same two files the tool's own "Custom provider" wizard writes.
+- **Qwen Code** (`--tool qwen-code`) — `~/.qwen/settings.json`: models in
+  `modelProviders.openai`, the key in the file's own `env` block. A setup still on the
+  discontinued `qwen-oauth` tier is switched to JoinGonka; any other working auth type
+  is kept.
+- **Factory Droid** (`--tool droid`) — `customModels` and `sessionDefaultSettings.model`
+  in `~/.factory/settings.json`; other custom models and comments stay as they were.
+- **Crush** (`--tool crush`) — provider, models with live prices and
+  `models.large` / `models.small` in `crush.json`. Crush keeps the model picked in its
+  UI in a state file that overrides `crush.json`: without `--model` the installer
+  leaves it alone and tells you which model will really start; with an explicit
+  `--model` it edits that one key, says so, and makes a backup.
+- **Zoo Code** (`--tool zoo`) — the community successor of Roo Code; printed
+  instructions with the real limits for its Model Configuration panel.
+- TOML configs are edited in place like JSON and YAML ones: comments, table order and
+  everything the installer does not own stay untouched, and the result is checked to
+  differ from the original only where intended.
+
+### Changed
+
+- **opencode and Kilo Code: the installer writes into the file the tool actually
+  obeys.** Both merge several global config files, and a later one wins — opencode
+  even creates `opencode.jsonc` itself on first start, above the `opencode.json` the
+  installer used to write. A `model` in the higher file silently overrode `--model`
+  while the installer reported success. The installer now writes into the existing
+  file that is loaded last (`opencode.json` / `kilo.jsonc` when there is none), keeps
+  a model you chose in a lower-priority file, and refreshes — with a backup — a
+  provider block that an earlier version left in a lower-priority file, so retired
+  models do not come back from it. For Kilo Code an existing `kilo.json` is used
+  instead of starting a second config next to it.
+- **The live check verifies the model that was written.** For OpenClaw, opencode and
+  Kilo Code the config got DeepSeek V4 Flash while the check was made with MiniMax
+  M2.7, so `✓ Verified` could vouch for a model the tool would not use.
+- **Zed on Windows** gets PowerShell instructions for the key (`$env:` for the
+  current window, `setx` for a permanent variable) instead of a POSIX `export`.
+- **Refusals always name the file.** Several adapters reported "The config file: …"
+  without a path; the path is now required wherever a config is edited.
+- **Hermes:** long lines you wrote yourself (a long prompt, a URL) are no longer
+  re-wrapped at 80 columns when the installer saves `config.yaml`. A broken
+  `config.yaml` is reported by error code and line, without quoting the file.
+- The list of tools in `--help` and the "N tools supported" count come from the
+  adapter registry instead of a hand-written copy, and the README and `package.json`
+  are checked against it by the test suite. `--tool constructor` and similar names
+  now give "Unknown tool" instead of a crash.
+- The interactive menu lists the most used coding agents first; **Roo Code**, shut
+  down in May 2026, is last and marked as discontinued, and its notice now points at
+  `--tool zoo`.
+- `CHANGELOG.md` ships in the npm package.
+
 ## [0.4.5] - 2026-09-21
 
 A safety release. An audit showed a class of defects where the installer could

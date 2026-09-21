@@ -51,15 +51,19 @@ describe('readJsonConfig', () => {
 });
 
 describe('applyJsonEdits', () => {
+  const PATH = '/home/u/cfg.json';
+
   it('keeps comments, foreign keys and formatting', () => {
     const raw = `{
   // не трогать
   "theme": "dark",
   "mcp": { "servers": ["local"] }
 }`;
-    const out = applyJsonEdits(raw, [
-      { path: ['provider', 'joingonka', 'baseURL'], value: 'https://gate.joingonka.ai/v1' },
-    ]);
+    const out = applyJsonEdits(
+      raw,
+      [{ path: ['provider', 'joingonka', 'baseURL'], value: 'https://gate.joingonka.ai/v1' }],
+      PATH,
+    );
     expect(out).toContain('// не трогать');
     expect(out).toContain('"theme": "dark"');
     expect(out).toContain('"servers"');
@@ -70,17 +74,21 @@ describe('applyJsonEdits', () => {
 
   it('applies several edits in order and deletes on undefined', () => {
     const raw = '{\n  "model": "old",\n  "aliases": { "gonka/stale": { "alias": "x" } }\n}';
-    const out = applyJsonEdits(raw, [
-      { path: ['model'], value: 'gonka/new' },
-      { path: ['aliases', 'gonka/stale'], value: undefined },
-    ]);
+    const out = applyJsonEdits(
+      raw,
+      [
+        { path: ['model'], value: 'gonka/new' },
+        { path: ['aliases', 'gonka/stale'], value: undefined },
+      ],
+      PATH,
+    );
     const parsed = JSON.parse(out);
     expect(parsed.model).toBe('gonka/new');
     expect(parsed.aliases).toEqual({});
   });
 
   it('ends the file with a newline', () => {
-    const out = applyJsonEdits('{}', [{ path: ['a'], value: 1 }]);
+    const out = applyJsonEdits('{}', [{ path: ['a'], value: 1 }], PATH);
     expect(out.endsWith('\n')).toBe(true);
   });
 
@@ -91,16 +99,20 @@ describe('applyJsonEdits', () => {
     // Адаптеры обходят дефект (заменяют массив целиком), а эта проверка ловит
     // всё, чего мы ещё не знаем.
     expect(() =>
-      applyJsonEdits('{ "fallbacks": ["x", "stale"] }', [
-        { path: ['fallbacks', 1], value: undefined },
-      ]),
-    ).toThrow(/Nothing was written/);
+      applyJsonEdits(
+        '{ "fallbacks": ["x", "stale"] }',
+        [{ path: ['fallbacks', 1], value: undefined }],
+        PATH,
+      ),
+    ).toThrow(/Internal error: the edited \/home\/u\/cfg\.json.*Nothing was written/s);
   });
 
   it('removes array items safely when the whole array is replaced', () => {
-    const out = applyJsonEdits('{ "fallbacks": ["x", "stale"] } // хвост', [
-      { path: ['fallbacks'], value: ['x'] },
-    ]);
+    const out = applyJsonEdits(
+      '{ "fallbacks": ["x", "stale"] } // хвост',
+      [{ path: ['fallbacks'], value: ['x'] }],
+      PATH,
+    );
     expect(out).toContain('// хвост');
     expect(JSON.parse(out.replace(/\/\/.*$/gm, '')).fallbacks).toEqual(['x']);
   });
@@ -137,9 +149,12 @@ describe('applyJsonEdits — неожиданная форма узла на п�
   });
 
   it('stays friendly when the caller did not pass a file path', () => {
+    // С 0.5.0 путь в сигнатуре ОБЯЗАТЕЛЕН (забытый путь ловит tsc — так его потеряли
+    // пять новых адаптеров); запасной текст остался для вызова в обход типов.
     expect(() =>
+      // @ts-expect-error — намеренно без третьего аргумента
       applyJsonEdits('{ "env": 5 }', [{ path: ['env', 'A'], value: 'b' }]),
-    ).toThrow(/"env" is a number.*Nothing was written/s);
+    ).toThrow(/The config file: "env" is a number.*Nothing was written/s);
   });
 
   it('does not get in the way of ordinary edits that create missing parents', () => {

@@ -16,10 +16,22 @@
  * но без экспортированной переменной провайдер не поднимался). Слияние не разрушает чужие данные.
  *
  * Достоверность сверена с исходником Kilo (github.com/Kilo-Org/kilocode, main;
- * первая сверка 25.06.2026, повторная 21.09.2026):
- *   - packages/opencode/src/config/config.ts — глобальный loader ищет
- *     ["kilo.jsonc","kilo.json","opencode.jsonc","opencode.json","config.json"]
- *     в каталоге конфига, kilo.jsonc первый/дефолтный; $schema
+ * первая сверка 25.06.2026, повторная 21.09.2026 — коммит 3873ac30):
+ *   - packages/opencode/src/config/config.ts — глобальных файлов ПЯТЬ, и loadGlobal
+ *     сливает их по возрастанию приоритета (remeda mergeDeep):
+ *       config.json → kilo.json → kilo.jsonc → opencode.json → opencode.jsonc
+ *     ⚠ Это НЕ тот порядок, в котором Kilo выбирает файл для СВОЕЙ записи
+ *     (globalConfigFile: первый существующий из ["kilo.jsonc","kilo.json",
+ *     "opencode.jsonc","opencode.json","config.json"], при отсутствии всех
+ *     создаётся kilo.jsonc): opencode.json(c) в каталоге Kilo ПЕРЕКРЫВАЕТ
+ *     kilo.jsonc. Нам важно, чтобы записанное действовало, поэтому пишем в
+ *     существующий файл с наивысшим приоритетом ЗАГРУЗКИ (core/layered-config.ts);
+ *     нет ни одного — создаём kilo.jsonc, как сам Kilo. До 0.5.0 установщик всегда
+ *     писал kilo.jsonc: рядом с рабочим kilo.json появлялся второй конфиг, а
+ *     `model` из opencode.json(c) молча перекрывала наш `--model`. `model` из
+ *     файла ниже — выбор пользователя, своим дефолтом его не перебиваем. Наш
+ *     прежний блок в файле ниже целевого приводим в порядок на месте: каталоги
+ *     моделей Kilo сливает, и убранная модель вернулась бы оттуда. $schema
  *     https://app.kilo.ai/config.json штампуется loader'ом;
  *   - packages/core/src/global.ts — каталог конфига = xdgConfig (npm-пакет
  *     `xdg-basedir`) + "kilo", то есть <XDG_CONFIG_HOME | ~/.config>/kilo на всех
@@ -32,6 +44,7 @@
  */
 import {
   BASE_URL_OPENAI,
+  CODING_AGENT_DEFAULT_MODEL,
   OPENCLAW_MODELS,
   OPENCODE_NPM,
   KILO_PROVIDER_ID,
@@ -40,6 +53,12 @@ import {
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import {
+  inheritedModel,
+  pickLayeredConfig,
+  readLowerConfigs,
+  type LayeredConfigFiles,
+} from '../core/layered-config.js';
 import { isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
 import {
   currentPathContext,
@@ -56,15 +75,37 @@ const OWNER_ONLY_MODE = 0o600;
 /** Актуальные id моделей каталога — для прунинга устаревших и сброса дефолта. */
 const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
+/** Глобальные конфиги Kilo по УБЫВАНИЮ приоритета загрузки (config.ts, loadGlobal). */
+const GLOBAL_CONFIG_NAMES = [
+  'opencode.jsonc',
+  'opencode.json',
+  'kilo.jsonc',
+  'kilo.json',
+  'config.json',
+] as const;
+
+/** Файл, который создаём, когда нет ни одного, — его же заводит сам Kilo. */
+const DEFAULT_CONFIG_NAME = 'kilo.jsonc';
+
 /**
- * Путь к kilo.jsonc: KILO_CONFIG, иначе <XDG_CONFIG_HOME | ~/.config>/kilo/kilo.jsonc
- * (источники — в шапке файла). Окружение приходит параметром, чтобы XDG-ветку
- * можно было проверить тестом.
+ * Файл конфига для записи и глобальные файлы ниже него: KILO_CONFIG (слой поверх
+ * глобальных), иначе существующий файл каталога <XDG_CONFIG_HOME | ~/.config>/kilo
+ * с наивысшим приоритетом, иначе kilo.jsonc (источники — в шапке файла).
+ * Окружение приходит параметром, чтобы XDG-ветку можно было проверить тестом.
  */
+export function kiloConfigFiles(ctx: PathContext = currentPathContext()): LayeredConfigFiles {
+  return pickLayeredConfig({
+    dir: pathApi(ctx).join(xdgConfigHome(ctx), 'kilo'),
+    names: GLOBAL_CONFIG_NAMES,
+    defaultName: DEFAULT_CONFIG_NAME,
+    override: envValue(ctx, 'KILO_CONFIG'),
+    ctx,
+  });
+}
+
+/** Путь к файлу конфига, в который пишем. */
 export function kiloConfigPath(ctx: PathContext = currentPathContext()): string {
-  return (
-    envValue(ctx, 'KILO_CONFIG') ?? pathApi(ctx).join(xdgConfigHome(ctx), 'kilo', 'kilo.jsonc')
-  );
+  return kiloConfigFiles(ctx).target;
 }
 
 /** Окружение читается В МОМЕНТ ВЫЗОВА (тесты подменяют env). */
@@ -80,70 +121,149 @@ function buildModels(): JsonObject {
   return models;
 }
 
-/**
- * Точечные правки kilo.jsonc: блок нашего провайдера (каталог моделей — целиком
- * актуальным набором) и top-level `model`. Файл — JSONC: комментарии и висячие
- * запятые в нём законны, поэтому правим текст, а не пересобираем документ.
- */
-function buildEdits(
-  existing: JsonObject,
-  input: ApplyInput,
-): { edits: JsonEdit[]; model: string; staleRefs: number } {
+/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
+function asObject(value: unknown): JsonObject | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonObject)
+    : undefined;
+}
+
+/** true — ссылка на НАШ провайдер, а модели в каталоге уже нет. */
+function isStale(ref: unknown): boolean {
+  return isStaleProviderModelRef(ref, KILO_PROVIDER_ID, CANONICAL_IDS);
+}
+
+/** Блок нашего провайдера; каталог моделей — целиком актуальным набором. */
+function providerEdits(apiKey: string): JsonEdit[] {
   const provider = ['provider', KILO_PROVIDER_ID];
-  const edits: JsonEdit[] = [
-    { path: ['$schema'], value: 'https://app.kilo.ai/config.json' },
+  return [
     { path: [...provider, 'npm'], value: OPENCODE_NPM },
     { path: [...provider, 'name'], value: 'JoinGonka' },
     { path: [...provider, 'options', 'baseURL'], value: BASE_URL_OPENAI },
     // Литеральный ключ jg-... (НЕ {env:...}-ссылка): без env-формы Kilo берёт
     // значение как есть → работает БЕЗ внешней переменной. Файл 0o600.
-    { path: [...provider, 'options', 'apiKey'], value: input.apiKey },
+    { path: [...provider, 'options', 'apiKey'], value: apiKey },
     { path: [...provider, 'models'], value: buildModels() },
   ];
+}
 
-  const current = existing.model;
-  const needsReset =
-    typeof current !== 'string' ||
-    current.trim() === '' ||
-    isStaleProviderModelRef(current, KILO_PROVIDER_ID, CANONICAL_IDS);
+/**
+ * Модель нашего провайдера этой установки: явный --model, иначе дефолт. На неё
+ * заменяются ссылки на убранные модели (small_model, модели агентов и команд) —
+ * формат тот же, что у opencode, поэтому и правило общее (core/stale-refs.ts).
+ */
+function replacementFor(input: ApplyInput): string {
+  return input.modelExplicit ? `${KILO_PROVIDER_ID}/${input.model}` : KILO_DEFAULT_MODEL;
+}
+
+/**
+ * Точечные правки ЦЕЛЕВОГО файла: блок нашего провайдера (каталог моделей —
+ * целиком актуальным набором) и top-level `model`. Файл — JSONC: комментарии и
+ * висячие запятые в нём законны, поэтому правим текст, а не пересобираем документ.
+ *
+ * `model` пишем при явном `--model`; иначе — только когда она нигде не задана или
+ * указывает на нашу убранную модель. Выбор пользователя из файла НИЖЕ целевого
+ * (`inherited`) действует, пока целевой модель не задаёт, — его не перебиваем.
+ */
+function buildEdits(
+  existing: JsonObject,
+  inherited: string | undefined,
+  input: ApplyInput,
+): { edits: JsonEdit[]; model: string; staleRefs: number } {
+  const edits: JsonEdit[] = [
+    { path: ['$schema'], value: 'https://app.kilo.ai/config.json' },
+    ...providerEdits(input.apiKey),
+  ];
+
+  const own = existing.model;
+  const current = typeof own === 'string' && own.trim() !== '' ? own : inherited;
 
   let model: string;
   if (input.modelExplicit) {
     model = `${KILO_PROVIDER_ID}/${input.model}`;
     edits.push({ path: ['model'], value: model });
-  } else if (needsReset) {
+  } else if (current === undefined || isStale(current)) {
     model = KILO_DEFAULT_MODEL;
     edits.push({ path: ['model'], value: model });
   } else {
-    model = current as string;
+    model = current;
   }
 
-  // Наши убранные модели вне каталога (small_model, модели агентов и команд) —
-  // формат тот же, что у opencode, поэтому и правило общее (core/stale-refs.ts).
-  // Замена — модель нашего провайдера этой установки: явный --model, иначе дефолт.
-  const replacement = input.modelExplicit
-    ? `${KILO_PROVIDER_ID}/${input.model}`
-    : KILO_DEFAULT_MODEL;
-  const staleEdits = opencodeStaleRefEdits(existing, KILO_PROVIDER_ID, CANONICAL_IDS, replacement);
+  const staleEdits = opencodeStaleRefEdits(
+    existing,
+    KILO_PROVIDER_ID,
+    CANONICAL_IDS,
+    replacementFor(input),
+  );
   edits.push(...staleEdits);
-  const staleDefault = isStaleProviderModelRef(current, KILO_PROVIDER_ID, CANONICAL_IDS);
 
-  return { edits, model, staleRefs: staleEdits.length + (staleDefault ? 1 : 0) };
+  // Устаревшую `model` из файла ниже считает legacyEdits — там она и чинится.
+  return { edits, model, staleRefs: staleEdits.length + (isStale(own) ? 1 : 0) };
+}
+
+/**
+ * Правки файла НИЖЕ целевого — только наше наследие (см. шапку): блок провайдера,
+ * если прежняя версия установщика оставила его здесь (заодно в нём обновляется
+ * ключ — старый литерал в забытом файле ни к чему), и ссылки на убранные модели.
+ * Пустой список — нашего в файле нет, и он остаётся нетронутым.
+ */
+function legacyEdits(existing: JsonObject, input: ApplyInput): { edits: JsonEdit[]; staleRefs: number } {
+  const replacement = replacementFor(input);
+  const stale: JsonEdit[] = [
+    ...(isStale(existing.model) ? [{ path: ['model'], value: replacement }] : []),
+    ...opencodeStaleRefEdits(existing, KILO_PROVIDER_ID, CANONICAL_IDS, replacement),
+  ];
+  const hasOurBlock = asObject(asObject(existing.provider)?.[KILO_PROVIDER_ID]) !== undefined;
+  return {
+    edits: [...(hasOurBlock ? providerEdits(input.apiKey) : []), ...stale],
+    staleRefs: stale.length,
+  };
 }
 
 async function apply(input: ApplyInput): Promise<ApplyResult> {
-  const configPath = resolvePath(input.scope);
+  const files = kiloConfigFiles();
+  const configPath = files.target;
 
-  // Порядок: прочитать → посчитать итоговый текст → и только потом бэкап и
-  // запись. Неразбираемый конфиг или примитив на пути правки = отказ без единой
+  // Порядок: прочитать → посчитать ВСЕ итоговые тексты → и только потом бэкапы и
+  // записи. Неразбираемый конфиг или примитив на пути правки = отказ без единой
   // записи на диск и без лишнего .bak.
   const doc = readJsonConfig(readRaw(configPath), configPath);
-  const { edits, model, staleRefs } = buildEdits(doc.value, input);
-  const text = applyJsonEdits(doc.text, edits, configPath);
+  // Файлы ниже целевого: неразбираемый — не отказ (пишем не в него), а заметка.
+  const lower = readLowerConfigs(files.lower);
+  const plan = buildEdits(doc.value, inheritedModel(lower.docs), input);
+  const text = applyJsonEdits(doc.text, plan.edits, configPath);
+
+  // Наследие в файлах ниже целевого; файл, который не меняется, не переписываем.
+  let staleRefs = plan.staleRefs;
+  const legacy: Array<{ path: string; text: string }> = [];
+  for (const { path, doc: lowerDoc } of lower.docs) {
+    const found = legacyEdits(lowerDoc.value, input);
+    staleRefs += found.staleRefs;
+    if (found.edits.length === 0) continue;
+    const lowerText = applyJsonEdits(lowerDoc.text, found.edits, path);
+    if (lowerText !== lowerDoc.text) legacy.push({ path, text: lowerText });
+  }
   const staleNote = staleRefsNote(staleRefs);
 
   const backupPath = backup(configPath);
   await atomicWrite(configPath, text, OWNER_ONLY_MODE);
+
+  const legacyNotes: string[] = [];
+  for (const { path, text: lowerText } of legacy) {
+    const legacyBackup = backup(path);
+    // В блоке лежит литеральный ключ — права только владельцу, как у целевого файла.
+    await atomicWrite(path, lowerText, OWNER_ONLY_MODE);
+    legacyNotes.push(
+      `Also refreshed the JoinGonka settings an earlier run left in ${path} — Kilo merges`,
+      `that file with the one above, so retired models would have come back from it.` +
+        (legacyBackup != null ? ` Backup: ${legacyBackup}` : ''),
+    );
+  }
+  for (const path of lower.unreadable) {
+    legacyNotes.push(
+      `Note: ${path} could not be parsed and was left untouched — Kilo reads it together with ${configPath}.`,
+    );
+  }
 
   return {
     configPath,
@@ -152,8 +272,9 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     messages: [
       `Configured ${configPath}`,
       `Base URL: ${BASE_URL_OPENAI}`,
-      `Default model: ${model}`,
+      `Default model: ${plan.model}`,
       ...(staleNote ? [staleNote] : []),
+      ...legacyNotes,
       '',
       // Ключ записан ЛИТЕРАЛЬНО в kilo.jsonc (0o600). Раньше писали {env:GONKA_API_KEY}
       // и просили export — но без экспортированной переменной провайдер не поднимался.
@@ -169,6 +290,11 @@ export const kiloAdapter: Adapter = {
   label: 'Kilo Code (OpenAI-compatible)',
   format: 'json',
   apiMode: 'openai',
+  // ★ Тот же дефолт, что уходит в конфиг (KILO_DEFAULT_MODEL). Оркестратор
+  // проверяет живым запросом модель из `defaultModel`; пока поля не было, без
+  // `--model` в конфиг писался DeepSeek, а «Verified» выдавалось за MiniMax —
+  // проверка подтверждала не ту модель, с которой инструмент пойдёт в сеть.
+  defaultModel: CODING_AGENT_DEFAULT_MODEL,
   resolvePath,
   apply,
 };

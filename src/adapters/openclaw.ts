@@ -39,6 +39,7 @@ import { homedir } from 'node:os';
 import type { JSONPath } from 'jsonc-parser';
 import {
   BASE_URL_OPENAI,
+  CODING_AGENT_DEFAULT_MODEL,
   OPENCLAW_PROVIDER_ID,
   OPENCLAW_PROVIDER_API,
   OPENCLAW_MODELS,
@@ -297,6 +298,11 @@ export const openclawAdapter: Adapter = {
   id: 'openclaw',
   label: 'OpenClaw (OpenAI-compatible)',
   format: 'json',
+  // ★ Тот же дефолт, что уходит в конфиг (OPENCLAW_DEFAULT_PRIMARY). Оркестратор
+  // проверяет живым запросом модель из `defaultModel`; пока поля не было, без
+  // `--model` в конфиг писался DeepSeek, а «Verified» выдавалось за MiniMax —
+  // проверка подтверждала не ту модель, с которой инструмент пойдёт в сеть.
+  defaultModel: CODING_AGENT_DEFAULT_MODEL,
   // В каталоге моделей есть `cost` — просим у оркестратора живые цены.
   wantsPricing: true,
   resolvePath,

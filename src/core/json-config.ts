@@ -151,14 +151,18 @@ function findBlockingNode(
  *      массивов адаптеры не удаляют по индексу, а заменяют массив целиком; эта
  *      же проверка страхует от случаев, которых мы ещё не знаем.
  *
- * @param filePath путь к файлу — только для сообщения об отказе.
+ * @param filePath путь к файлу — только для сообщения об отказе. В сигнатуре он
+ *   ОБЯЗАТЕЛЕН: пока параметр был необязательным, пять новых адаптеров его не
+ *   передали, и в отказе вместо пути стояло безликое «The config file:» — человек
+ *   с тремя конфигами не понимал, какой из них чинить. Теперь забытый путь ловит
+ *   `tsc`. Запасной текст ниже — только для вызова из нетипизированного кода.
  */
 export function applyJsonEdits(
   text: string,
   edits: readonly JsonEdit[],
-  filePath?: string,
+  filePath: string,
 ): string {
-  const where = filePath ?? 'The config file';
+  const where = filePath || 'The config file';
   let out = text;
   for (const edit of edits) {
     try {
@@ -183,7 +187,7 @@ export function applyJsonEdits(
   parseJsonc(out, errors, { allowTrailingComma: true, disallowComments: false });
   if (errors.length > 0) {
     throw new Error(
-      `Internal error: the edited ${filePath ?? 'config'} would no longer be valid JSON/JSONC ` +
+      `Internal error: the edited ${filePath || 'config'} would no longer be valid JSON/JSONC ` +
         `(${printParseErrorCode(errors[0]!.error)}). Nothing was written — please report this at ` +
         'https://github.com/unameisfine/joingonka-setup/issues',
     );

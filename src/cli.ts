@@ -14,6 +14,7 @@
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { run } from './run.js';
+import { programDescription, toolOptionDescription } from './cli-text.js';
 import { askApiKey, askTool } from './core/prompt.js';
 import type { Scope } from './adapters/types.js';
 
@@ -38,13 +39,11 @@ const pkgVersion = (
 const program = new Command();
 program
   .name('joingonka-setup')
-  .description('Point an agentic AI tool at JoinGonka Gateway (15 tools supported)')
+  // Число и список инструментов — из реестра (cli-text.ts), а не литералом: так
+  // `--help` не отстаёт от реестра при добавлении адаптера.
+  .description(programDescription())
   .version(pkgVersion)
-  .option(
-    '--tool <tool>',
-    'Tool: claude-code | openclaw | cursor | cline | opencode | aider | kilo | roo | continue | ' +
-      'hermes | pi | zed | zcode | jetbrains | copilot-byok',
-  )
+  .option('--tool <tool>', toolOptionDescription())
   .option('--scope <scope>', 'Installation scope: user or local', 'user')
   .option(
     '--model <model>',

@@ -42,13 +42,20 @@ export const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash-0731';
 
 /**
  * Модель по умолчанию для инструментов, которым установщик ПИШЕТ модель в
- * конфиг (claude-code, openclaw, opencode, kilo, pi, hermes) — решение
+ * конфиг (claude-code, codex, opencode, openclaw, hermes, pi, omp, kilo, goose,
+ * crush, qwen-code, kimi-code, droid, mimo-code, minimax-code) — решение
  * оператора 21.09.2026: у кодовых агентов длинный контекст и потолок ответа
  * важнее, чем максимальная ёмкость сети.
  *
  * Инструменты, которым мы только ПЕЧАТАЕМ инструкцию (Cursor, Cline, Continue,
- * Aider, JetBrains, Copilot, ZCode, Zed, Roo), остаются на DEFAULT_MODEL:
- * там модель выбирает человек руками, и подсказывать стоит самую ёмкую.
+ * Aider, JetBrains, Copilot, ZCode, Zoo, Roo), остаются на DEFAULT_MODEL: там
+ * модель выбирает человек руками, и подсказывать стоит самую ёмкую. Там же и Zed:
+ * без `--model` он пишет провайдера и каталог, а модель выбирается в панели агента.
+ *
+ * ★ Каждый такой адаптер обязан объявить `defaultModel: CODING_AGENT_DEFAULT_MODEL`:
+ * по этому полю оркестратор выбирает модель live-проверки, и без него «Verified»
+ * подтверждает MiniMax, хотя в конфиг ушёл DeepSeek (так было у openclaw,
+ * opencode и kilo до 0.5.0). Правило держит тест adapters/all-adapters.test.ts.
  *
  * ⚠ Ёмкость DeepSeek ниже, чем у MiniMax (замер 19.09.2026: худший час 56%
  * успешных против 98%). Поэтому там, где инструмент умеет запасные модели,

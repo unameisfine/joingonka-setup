@@ -21,10 +21,21 @@ export async function askApiKey(): Promise<string> {
   });
 }
 
-/** Выбор инструмента из меню (список берётся из реестра адаптеров). */
+/**
+ * Сколько строк меню видно сразу. По умолчанию у select — 7: при 25 инструментах
+ * человек видел бы меньше трети списка и не догадывался, что остальное ниже.
+ */
+const TOOL_MENU_PAGE_SIZE = 15;
+
+/** Выбор инструмента из меню (список и его порядок берутся из реестра адаптеров). */
 export async function askTool(): Promise<string> {
   return select({
     message: 'Which tool do you want to configure?',
     choices: listTools(),
+    pageSize: TOOL_MENU_PAGE_SIZE,
+    // Без закольцовки: порядок в реестре осмысленный (ходовые агенты первыми,
+    // закрытый Roo Code — последним), и «вверх» с первой строки не должно
+    // приводить к закрытому продукту.
+    loop: false,
   });
 }

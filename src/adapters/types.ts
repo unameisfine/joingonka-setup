@@ -58,8 +58,12 @@ export interface Adapter {
   readonly id: string;
   /** Человекочитаемое имя для меню выбора. */
   readonly label: string;
-  /** Формат конфига — определяет ветку записи. */
-  readonly format: 'json' | 'yaml' | 'instructions';
+  /**
+   * Формат родного конфига инструмента: 'json' (в том числе JSONC), 'yaml',
+   * 'toml' (Codex CLI, Kimi Code CLI — core/toml-config.ts) либо 'instructions'
+   * — файл не пишется, печатается инструкция для ручного ввода.
+   */
+  readonly format: 'json' | 'yaml' | 'toml' | 'instructions';
 
   /**
    * Как инструмент обращается к нашему gateway — определяет endpoint live-проверки

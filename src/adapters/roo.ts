@@ -74,7 +74,8 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
 export const rooAdapter: Adapter = {
   id: 'roo',
   // Пометка в меню выбора: человек должен увидеть статус ДО того, как выберет.
-  label: 'Roo Code (shut down May 2026 — see Zoo Code / Kilo / Cline)',
+  // В реестре Roo стоит последним — после всех живых инструментов.
+  label: 'Roo Code (discontinued — shut down May 2026; see Zoo Code / Kilo / Cline)',
   format: 'instructions',
   apiMode: 'openai',
   resolvePath,

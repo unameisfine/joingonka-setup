@@ -252,6 +252,23 @@ describe('hermesAdapter.apply — YAML deep merge (do not clobber foreign data)'
     expect(raw).toContain('# my precious comment');
     expect(raw).toContain('# inline note');
   });
+
+  // ★ До 0.5.0 файл писался через `doc.toString()` с шириной строки по умолчанию
+  // (80): пакет `yaml` сворачивал в несколько строк ЧУЖИЕ длинные значения,
+  // которых установщик не касался. Запись идёт через core/yaml-config (lineWidth 0).
+  it("does not re-wrap the user's long lines", async () => {
+    const prompt = 'You are a careful agent. '.repeat(12).trim();
+    const url = `https://example.com/${'a'.repeat(120)}`;
+    const foreign = ['agent:', `  system_prompt: ${prompt}`, `  quoted: "${prompt}"`, `  webhook: ${url}`];
+    seedConfig(foreign.join('\n') + '\n');
+
+    await hermesAdapter.apply(input());
+
+    const lines = readFileSync(defaultConfigPath(), 'utf-8').split('\n');
+    for (const line of foreign) {
+      expect(lines).toContain(line);
+    }
+  });
 });
 
 describe('hermesAdapter.apply — guards for malformed shapes', () => {

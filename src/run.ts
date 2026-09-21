@@ -13,7 +13,7 @@
  */
 import { validateApiKey } from './core/validate.js';
 import { canonicalModel } from './core/models.js';
-import { getAdapter, listTools } from './adapters/registry.js';
+import { getAdapter, localScopeToolIds, toolIds } from './adapters/registry.js';
 import type { ApplyResult, Scope } from './adapters/types.js';
 import { verifyConfig, type VerifyResult } from './core/verify.js';
 import { fetchLivePricing } from './core/pricing.js';
@@ -61,10 +61,7 @@ export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcom
   const toolId = options.tool ?? (await deps.askTool());
   const adapter = getAdapter(toolId);
   if (!adapter) {
-    const valid = listTools()
-      .map((t) => t.value)
-      .join(', ');
-    throw new Error(`Unknown tool: ${toolId}. Valid tools: ${valid}.`);
+    throw new Error(`Unknown tool: ${toolId}. Valid tools: ${toolIds().join(', ')}.`);
   }
 
   // 1a. Область установки. Инструмент без проектного конфига обязан сказать
@@ -73,7 +70,7 @@ export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcom
   if (scope === 'local' && !adapter.supportsLocalScope) {
     throw new Error(
       `${adapter.id} keeps a single per-user config, so --scope local does not apply to it. ` +
-        `Re-run without --scope local (supported for: claude-code).`,
+        `Re-run without --scope local (supported for: ${localScopeToolIds().join(', ')}).`,
     );
   }
 

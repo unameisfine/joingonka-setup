@@ -81,6 +81,41 @@ function resolvePath(_scope: Scope): string {
 const PROVIDER_PATH = ['language_models', 'openai_compatible', ZED_PROVIDER_ID];
 
 /**
+ * Как передать Zed ключ — в settings.json его класть нельзя, поэтому печатаем два
+ * пути: переменная окружения либо хранилище ключей из интерфейса Zed.
+ *
+ * Команда для переменной зависит от ПЛАТФОРМЫ: `export` есть только в POSIX-
+ * оболочках. До 0.5.0 он печатался и на Windows, где его нет ни в PowerShell, ни
+ * в cmd, — человек копировал строку и получал ошибку. На Windows даём оба
+ * штатных способа: `$env:` (PowerShell, только текущее окно — Zed надо запустить
+ * из него же) и `setx` (переменная пользователя, постоянная; уже открытых окон и
+ * программ не касается — поэтому Zed после неё перезапускается).
+ *
+ * Окружение приходит параметром (как у путей, core/paths.ts) — Windows-ветка
+ * проверяется тестом на любой машине.
+ */
+export function zedKeyInstructions(
+  apiKey: string,
+  ctx: PathContext = currentPathContext(),
+): string[] {
+  const viaEnv =
+    ctx.platform === 'win32'
+      ? [
+          '  1) an environment variable — in PowerShell:',
+          `       $env:${ZED_API_KEY_ENV} = "${apiKey}"    (this window only — start Zed from it)`,
+          `       setx ${ZED_API_KEY_ENV} "${apiKey}"      (permanent — for programs started afterwards,`,
+          '                                                so open a new terminal and restart Zed)',
+        ]
+      : [`  1) export ${ZED_API_KEY_ENV}=${apiKey}`];
+  return [
+    'Give Zed the key in either way:',
+    ...viaEnv,
+    '  2) or: agent panel → Settings → LLM Providers → paste it into the',
+    `     "${ZED_PROVIDER_ID}" provider (stored in your OS keychain).`,
+  ];
+}
+
+/**
  * Настройки агента, где лежит выбор модели. Схема — crates/settings_content/
  * src/agent.rs (сверено 21.09.2026): одиночные — `LanguageModelSelection`
  * { provider, model, … }, списки — массивы таких же записей. Пример формы в доке:
@@ -210,10 +245,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       '',
       // Единственный адаптер, который НЕ кладёт ключ в конфиг: так требует Zed.
       'Zed does NOT read API keys from settings.json, so the key was not written.',
-      'Give Zed the key in either way:',
-      `  1) export ${ZED_API_KEY_ENV}=${input.apiKey}`,
-      '  2) or: agent panel → Settings → LLM Providers → paste it into the',
-      `     "${ZED_PROVIDER_ID}" provider (stored in your OS keychain).`,
+      ...zedKeyInstructions(input.apiKey),
       '',
       `Then pick ${input.model} in the Agent Panel model selector.`,
       "Edit predictions (Zeta) stay on Zed's own models — a Zed limitation.",

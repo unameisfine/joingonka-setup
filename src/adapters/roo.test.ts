@@ -51,8 +51,19 @@ describe('rooAdapter', () => {
     }
   });
 
+  // С 0.5.0 Zoo Code зарегистрирован, поэтому преемника называем КОМАНДОЙ, а не
+  // адресом проекта. Проверка безусловная: исчезни `zoo` из реестра — заметка
+  // молча вернулась бы к ссылке, а условный тест выше остался бы зелёным.
+  it('sends people to Zoo Code with a command the installer can run', async () => {
+    const text = (await rooAdapter.apply(input)).messages.join('\n');
+    expect(getAdapter('zoo')).toBeDefined();
+    expect(text).toContain('--tool zoo');
+    expect(text).not.toContain('github.com/Zoo-Code-Org');
+  });
+
   it('says so in the tool menu as well', () => {
     expect(rooAdapter.label).toMatch(/shut down/i);
+    expect(rooAdapter.label).toMatch(/discontinued/i);
   });
 
   it('prints the real limits of the chosen model', async () => {

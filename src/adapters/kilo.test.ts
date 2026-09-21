@@ -1,24 +1,43 @@
 /** Контракт-тесты Kilo-адаптера (OpenCode-формат + tool_call/reasoning). */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import {
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync,
+  mkdirSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { kiloAdapter, kiloConfigPath } from './kilo.js';
 import { KILO_DEFAULT_MODEL, GLM_MODEL } from '../constants.js';
 
+// HOME и XDG_CONFIG_HOME тоже в песочнице: адаптер смотрит на ВСЕ глобальные
+// файлы Kilo (в том числе чтобы привести в порядок свой прежний блок в файле ниже
+// по приоритету) — настоящий ~/.config/kilo разработчика тесты видеть не должны.
+const ENV_KEYS = ['HOME', 'XDG_CONFIG_HOME', 'KILO_CONFIG'] as const;
+
 let tmpDir: string;
 let configPath: string;
-let originalEnv: string | undefined;
+const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'joingonka-kilo-'));
   configPath = join(tmpDir, 'kilo.jsonc');
-  originalEnv = process.env.KILO_CONFIG;
+  for (const key of ENV_KEYS) {
+    savedEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+  process.env.HOME = join(tmpDir, 'home');
   process.env.KILO_CONFIG = configPath;
 });
 afterEach(() => {
-  if (originalEnv === undefined) delete process.env.KILO_CONFIG;
-  else process.env.KILO_CONFIG = originalEnv;
+  for (const key of ENV_KEYS) {
+    if (savedEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = savedEnv[key];
+  }
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -188,5 +207,142 @@ describe('kiloAdapter.apply — неожиданная форма узла (0.4.
 
     expect(readFileSync(configPath, 'utf-8')).toBe(original);
     expect(readdirSync(tmpDir)).toEqual(['kilo.jsonc']);
+  });
+});
+
+describe('kiloAdapter — какой глобальный файл читает Kilo (0.5.0)', () => {
+  // ★ Kilo сливает ПЯТЬ глобальных файлов по возрастанию приоритета (config.ts,
+  // loadGlobal; сверено 21.09.2026): config.json → kilo.json → kilo.jsonc →
+  // opencode.json → opencode.jsonc. До 0.5.0 установщик всегда писал kilo.jsonc:
+  // рядом с рабочим kilo.json заводил второй конфиг, а `model` из opencode.json(c)
+  // в том же каталоге молча перекрывала наш `--model`.
+  const KIMI = 'joingonka/moonshotai/Kimi-K2.6';
+  let globalDir: string;
+  const file = (name: string) => join(globalDir, name);
+  const seed = (name: string, value: unknown) =>
+    writeFileSync(file(name), typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+  const read = (name: string): any =>
+    JSON.parse(readFileSync(file(name), 'utf-8').replace(/^\s*\/\/.*$/gm, ''));
+  const backupsOf = (name: string) =>
+    readdirSync(globalDir).filter((f) => f.startsWith(`${name}.bak.`));
+
+  beforeEach(() => {
+    // Без KILO_CONFIG адаптер работает с настоящей раскладкой каталога
+    // (HOME — в песочнице, см. общий beforeEach).
+    delete process.env.KILO_CONFIG;
+    globalDir = join(process.env.HOME!, '.config', 'kilo');
+    mkdirSync(globalDir, { recursive: true });
+  });
+
+  it('creates kilo.jsonc — the file Kilo seeds itself — when there is no global config yet', async () => {
+    const result = await kiloAdapter.apply(input);
+    expect(result.configPath).toBe(file('kilo.jsonc'));
+    expect(readdirSync(globalDir)).toEqual(['kilo.jsonc']);
+  });
+
+  it('writes into an existing kilo.json instead of starting a second config next to it', async () => {
+    seed('kilo.json', { theme: 'dark' });
+
+    const result = await kiloAdapter.apply(input);
+
+    expect(result.configPath).toBe(file('kilo.json'));
+    expect(kiloAdapter.resolvePath('user')).toBe(file('kilo.json'));
+    expect(read('kilo.json').theme).toBe('dark');
+    expect(read('kilo.json').provider.joingonka.options.apiKey).toBe('jg-test123');
+    expect(readdirSync(globalDir).filter((f) => !f.includes('.bak.'))).toEqual(['kilo.json']);
+  });
+
+  it('makes an explicit --model effective when opencode.jsonc in the same directory pins another', async () => {
+    seed('kilo.jsonc', { model: KILO_DEFAULT_MODEL });
+    seed('opencode.jsonc', '{\n  // перенёс из opencode\n  "model": "anthropic/claude-opus-5"\n}\n');
+
+    const result = await kiloAdapter.apply({ ...input, model: GLM_MODEL, modelExplicit: true });
+
+    // opencode.jsonc Kilo грузит ПОСЛЕДНИМ — значит, действует значение оттуда.
+    expect(result.configPath).toBe(file('opencode.jsonc'));
+    expect(read('opencode.jsonc').model).toBe(`joingonka/${GLM_MODEL}`);
+    expect(readFileSync(file('opencode.jsonc'), 'utf-8')).toContain('// перенёс из opencode');
+  });
+
+  it("respects the user's model from a lower-priority file", async () => {
+    seed('kilo.jsonc', { $schema: 'https://app.kilo.ai/config.json' });
+    seed('config.json', { model: 'anthropic/claude-opus-5' });
+
+    const result = await kiloAdapter.apply(input);
+
+    expect(read('kilo.jsonc').model).toBeUndefined();
+    expect(result.messages.join('\n')).toContain('Default model: anthropic/claude-opus-5');
+    expect(read('config.json')).toEqual({ model: 'anthropic/claude-opus-5' });
+    expect(backupsOf('config.json')).toHaveLength(0);
+  });
+
+  it('refreshes the provider block an earlier installer left in a lower-priority file', async () => {
+    seed('opencode.json', { theme: 'light' });
+    seed('kilo.jsonc', {
+      model: KIMI,
+      small_model: KIMI,
+      provider: {
+        joingonka: {
+          options: { baseURL: 'https://gate.joingonka.ai/v1', apiKey: 'jg-old-key', timeout: 600000 },
+          models: { 'moonshotai/Kimi-K2.6': { name: 'Kimi K2.6 (Gonka)' } },
+        },
+      },
+    });
+
+    const result = await kiloAdapter.apply(input);
+
+    // Целевой — opencode.json (выше kilo.jsonc по приоритету загрузки).
+    expect(result.configPath).toBe(file('opencode.json'));
+    expect(read('opencode.json').theme).toBe('light');
+    expect(read('opencode.json').model).toBe(KILO_DEFAULT_MODEL);
+
+    // Прежний блок приведён в порядок на месте: каталог, ключ, ссылки.
+    const lower = read('kilo.jsonc');
+    expect(Object.keys(lower.provider.joingonka.models)).not.toContain('moonshotai/Kimi-K2.6');
+    expect(lower.provider.joingonka.models[GLM_MODEL]).toBeTruthy();
+    expect(lower.provider.joingonka.options.apiKey).toBe('jg-test123');
+    expect(lower.provider.joingonka.options.timeout).toBe(600000);
+    expect(lower.model).toBe(KILO_DEFAULT_MODEL);
+    expect(lower.small_model).toBe(KILO_DEFAULT_MODEL);
+    expect(readFileSync(file('kilo.jsonc'), 'utf-8')).not.toContain('jg-old-key');
+    expect(backupsOf('kilo.jsonc')).toHaveLength(1);
+
+    const text = result.messages.join('\n');
+    expect(text).toContain(file('kilo.jsonc'));
+    expect(text).toMatch(/2 references.*no longer served/i);
+  });
+
+  it('is idempotent across both files', async () => {
+    seed('opencode.json', { theme: 'light' });
+    seed('kilo.jsonc', { provider: { joingonka: { models: { 'moonshotai/Kimi-K2.6': {} } } } });
+
+    await kiloAdapter.apply(input);
+    const first = [readFileSync(file('opencode.json'), 'utf-8'), readFileSync(file('kilo.jsonc'), 'utf-8')];
+    await kiloAdapter.apply(input);
+
+    expect(readFileSync(file('opencode.json'), 'utf-8')).toBe(first[0]);
+    expect(readFileSync(file('kilo.jsonc'), 'utf-8')).toBe(first[1]);
+    expect(backupsOf('kilo.jsonc')).toHaveLength(1);
+  });
+
+  it('keeps every file that holds the API key owner-only, the refreshed lower one included', async () => {
+    seed('opencode.json', { theme: 'light' });
+    seed('kilo.jsonc', { provider: { joingonka: { options: { apiKey: 'jg-old-key' } } } });
+
+    await kiloAdapter.apply(input);
+
+    for (const name of ['opencode.json', 'kilo.jsonc']) {
+      expect(statSync(file(name)).mode & 0o777, name).toBe(0o600);
+    }
+  });
+
+  it('leaves an unparsable lower-priority file alone and says so', async () => {
+    seed('kilo.jsonc', { $schema: 'https://app.kilo.ai/config.json' });
+    seed('config.json', '{ broken');
+
+    const result = await kiloAdapter.apply(input);
+
+    expect(readFileSync(file('config.json'), 'utf-8')).toBe('{ broken');
+    expect(result.messages.join('\n')).toMatch(/config\.json.*could not be parsed/);
   });
 });

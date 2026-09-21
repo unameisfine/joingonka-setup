@@ -6,7 +6,8 @@
  * инструкциях). Работаем через Document-API пакета `yaml` (parseDocument +
  * setIn), а не parse/stringify: точечные setIn не трогают чужие ключи
  * (mcp_servers, agent, compression, custom_providers, fallback_providers)
- * и сохраняют комментарии/форматирование пользователя.
+ * и сохраняют комментарии/форматирование пользователя. Чтение, отказ на битом
+ * файле и запись — общие для YAML-адаптеров (core/yaml-config.ts).
  *
  * Что прописываем (кастомный OpenAI-совместимый endpoint):
  *   model:
@@ -32,7 +33,7 @@
  *
  * Путь один для обоих scope: Hermes читает глобальный конфиг — см. hermesConfigPath.
  */
-import { Document, isMap, isSeq, parseDocument, type YAMLMap } from 'yaml';
+import { isMap, isSeq, type Document, type YAMLMap } from 'yaml';
 import { BASE_URL, BASE_URL_OPENAI, DEEPSEEK_MODEL, OPENCLAW_MODELS } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import {
@@ -43,6 +44,7 @@ import {
   type PathContext,
 } from '../core/paths.js';
 import { staleRefsNote } from '../core/stale-refs.js';
+import { ensureMapAt, loadYamlMap, renderYaml } from '../core/yaml-config.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файл конфига — только владелец (rw-------). */
@@ -82,38 +84,6 @@ export function hermesConfigPath(ctx: PathContext = currentPathContext()): strin
 /** Окружение читается В МОМЕНТ ВЫЗОВА (тесты подменяют HOME/env). */
 function resolvePath(_scope: Scope): string {
   return hermesConfigPath();
-}
-
-/** Что делать пользователю, когда его файл нельзя править безопасно. */
-const REFUSAL_HINT =
-  'Nothing was written — fix the file (or move it aside) and run the installer again.';
-
-/**
- * Загружает существующий config.yaml как YAML-Document. Файла нет, он пуст
- * или в нём одни комментарии → новый документ (комментарии сохраняются).
- *
- * ★ Битый YAML и корень-не-map (скаляр/список) → ОТКАЗ, как у JSON-адаптеров
- * (core/json-config): вызывающий к этому моменту ничего не записал и бэкапа не
- * делал. До 0.4.5 здесь молча возвращался пустой документ, и config.yaml
- * перезаписывался: человек терял mcp_servers, память, расписания — всё, что в
- * нём жило, — из-за одной незакрытой скобки.
- */
-function loadDocument(raw: string | null, filePath: string): Document {
-  if (raw == null || raw.trim() === '') {
-    return new Document({});
-  }
-  const doc = parseDocument(raw);
-  const first = doc.errors[0];
-  if (first) {
-    // Первая строка сообщения уже содержит «at line N, column M»; дальше в нём
-    // идёт многострочная выдержка из файла — в ошибку её не тащим.
-    const reason = first.message.split('\n')[0]!.replace(/:$/, '');
-    throw new Error(`${filePath} is not valid YAML: ${reason}. ${REFUSAL_HINT}`);
-  }
-  if (doc.contents != null && !isMap(doc.contents)) {
-    throw new Error(`${filePath} does not contain a YAML mapping at the top level. ${REFUSAL_HINT}`);
-  }
-  return doc;
 }
 
 /** true — запись запасной модели ведёт на НАШ шлюз, а модели в сети уже нет. */
@@ -166,17 +136,17 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
   const configPath = resolvePath(input.scope);
 
   // Порядок: прочитать → посчитать итоговый текст → и только потом бэкап и
-  // запись. Файл, который нельзя разобрать, приводит к отказу, и тогда мы не
-  // трогаем диск вовсе (ни записи, ни лишнего .bak); то же — если правка
-  // документа бросит исключение на неожиданной форме узла.
-  const doc = loadDocument(readRaw(configPath), configPath);
+  // запись. Файл, который нельзя разобрать (битый YAML, корень-не-map), приводит
+  // к отказу, и тогда мы не трогаем диск вовсе (ни записи, ни лишнего .bak); то
+  // же — если правка документа бросит исключение на неожиданной форме узла.
+  // ★ До 0.4.5 битый файл молча заменялся пустым документом: человек терял
+  // mcp_servers, память, расписания — всё, что жило в config.yaml.
+  const doc = loadYamlMap(readRaw(configPath), configPath);
 
   // `model` может оказаться скаляром/списком (рукописный конфиг) — setIn в него
-  // бросил бы исключение; убираем узел, setIn ниже создаст map заново.
-  const modelNode = doc.getIn(['model']);
-  if (modelNode !== undefined && !isMap(modelNode)) {
-    doc.deleteIn(['model']);
-  }
+  // бросил бы исключение. Раздел целиком НАШ (provider: custom), поэтому мусор на
+  // его месте заменяем (replace), а не отказываем: setIn ниже создаст map заново.
+  ensureMapAt(doc, ['model'], configPath, true);
 
   // Точечные setIn: наши ключи перезаписываются (reconcile — устаревшая
   // модель/URL/ключ не переживают повторную установку), чужие поля внутри
@@ -209,7 +179,10 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
   doc.setIn(['model', 'api_key'], input.apiKey);
 
   const staleNote = staleRefsNote(pruneStaleFallbacks(doc));
-  const text = doc.toString();
+  // renderYaml пишет без переноса длинных строк: до 0.5.0 здесь стоял
+  // `doc.toString()`, и `yaml` сворачивал ЧУЖИЕ значения длиннее 80 колонок
+  // (system_prompt, URL) при каждой установке.
+  const text = renderYaml(doc, configPath);
 
   const backupPath = backup(configPath);
   await atomicWrite(configPath, text, OWNER_ONLY_MODE);

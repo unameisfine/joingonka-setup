@@ -24,7 +24,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseJsonc } from 'jsonc-parser';
-import { zedAdapter, zedSettingsPath } from './zed.js';
+import { zedAdapter, zedKeyInstructions, zedSettingsPath } from './zed.js';
 import { DEFAULT_MODEL } from '../constants.js';
 
 let tmpDir: string;
@@ -378,5 +378,45 @@ describe('zedAdapter.apply — неожиданная форма узла (0.4.5
 
     expect(readRawText()).toBe(original);
     expect(readdirSync(join(tmpDir, '.config', 'zed'))).toEqual(['settings.json']);
+  });
+});
+
+describe('zedKeyInstructions — как передать ключ Zed на разных платформах (0.5.0)', () => {
+  // Ключ в settings.json класть нельзя, поэтому адаптер печатает, как задать
+  // переменную окружения. До 0.5.0 на Windows печатался POSIX-овый `export`,
+  // которого нет ни в PowerShell, ни в cmd.
+  const ctx = (platform: NodeJS.Platform) => ({ platform, env: {}, home: '/home/u' });
+
+  it('prints `export` for POSIX shells (Linux, macOS)', () => {
+    for (const platform of ['linux', 'darwin'] as const) {
+      const text = zedKeyInstructions('jg-test123', ctx(platform)).join('\n');
+      expect(text).toContain('export JOINGONKA_API_KEY=jg-test123');
+      expect(text).not.toContain('setx');
+      expect(text).not.toContain('$env:');
+    }
+  });
+
+  it('prints PowerShell `$env:` for the session and `setx` for a permanent variable on Windows', () => {
+    const text = zedKeyInstructions('jg-test123', ctx('win32')).join('\n');
+    expect(text).toContain('$env:JOINGONKA_API_KEY = "jg-test123"');
+    expect(text).toContain('setx JOINGONKA_API_KEY "jg-test123"');
+    // `export` на Windows не работает — его в тексте быть не должно.
+    expect(text).not.toMatch(/\bexport\b/);
+    // setx не меняет уже открытые окна — об этом сказано прямо.
+    expect(text).toMatch(/started afterwards|new terminal/i);
+  });
+
+  it('offers the UI key store on every platform', () => {
+    for (const platform of ['linux', 'darwin', 'win32'] as const) {
+      const text = zedKeyInstructions('jg-test123', ctx(platform)).join('\n');
+      expect(text).toContain('LLM Providers');
+      expect(text).toContain('"joingonka" provider');
+    }
+  });
+
+  it('apply() uses the instructions of the platform it runs on', async () => {
+    const { messages } = await zedAdapter.apply(input());
+    const expected = zedKeyInstructions('jg-test123');
+    expect(messages.join('\n')).toContain(expected.join('\n'));
   });
 });
