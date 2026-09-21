@@ -1,9 +1,9 @@
 /** Контракт-тесты Kilo-адаптера (OpenCode-формат + tool_call/reasoning). */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { kiloAdapter } from './kilo.js';
+import { kiloAdapter, kiloConfigPath } from './kilo.js';
 import { KILO_DEFAULT_MODEL, GLM_MODEL } from '../constants.js';
 
 let tmpDir: string;
@@ -115,5 +115,78 @@ describe('kiloAdapter.apply — сохранность чужого и явна�
   it('writes an explicit --model', async () => {
     await kiloAdapter.apply({ ...input, model: GLM_MODEL, modelExplicit: true });
     expect(readConfig().model).toBe(`joingonka/${GLM_MODEL}`);
+  });
+});
+
+describe('kiloAdapter.apply — ушедшие модели ВНЕ каталога провайдера (0.4.5)', () => {
+  // Kilo — форк opencode, схема та же (packages/core/src/v1/config/*.ts в
+  // Kilo-Org/kilocode, 21.09.2026): small_model, agent/mode/command.<имя>.model.
+  const KIMI = 'joingonka/moonshotai/Kimi-K2.6';
+
+  it('replaces our retired model everywhere and keeps foreign and live refs', async () => {
+    writeFileSync(
+      configPath,
+      `{
+  // мои агенты
+  "model": "anthropic/claude-opus-5",
+  "small_model": "${KIMI}",
+  "agent": {
+    "plan": { "model": "${KIMI}" },
+    "build": { "model": "anthropic/claude-opus-5" },
+  },
+  "command": { "test": { "template": "run tests", "model": "${KIMI}" } },
+}`,
+    );
+
+    const result = await kiloAdapter.apply(input);
+
+    const raw = readFileSync(configPath, 'utf-8');
+    expect(raw).toContain('// мои агенты'); // правки точечные, комментарий цел
+    expect(raw).not.toContain('Kimi');
+    expect(raw).toContain(`"small_model": "${KILO_DEFAULT_MODEL}"`);
+    expect(raw).toContain('"model": "anthropic/claude-opus-5"');
+    expect(result.messages.join('\n')).toMatch(/3 references.*no longer served/i);
+  });
+
+  it('uses an explicit --model as the replacement', async () => {
+    writeFileSync(configPath, JSON.stringify({ small_model: KIMI }));
+
+    await kiloAdapter.apply({ ...input, model: GLM_MODEL, modelExplicit: true });
+
+    expect(readConfig().small_model).toBe(`joingonka/${GLM_MODEL}`);
+  });
+});
+
+describe('kiloConfigPath — где Kilo ищет конфиг (0.4.5)', () => {
+  // Kilo считает каталог так же, как opencode: xdgConfig из xdg-basedir + "kilo"
+  // (packages/core/src/global.ts); KILO_CONFIG — настоящий флаг Kilo (flag/flag.ts).
+  const ctx = (env: NodeJS.ProcessEnv) => ({ platform: 'linux' as const, env, home: '/home/u' });
+
+  it('defaults to ~/.config/kilo/kilo.jsonc', () => {
+    expect(kiloConfigPath(ctx({}))).toBe('/home/u/.config/kilo/kilo.jsonc');
+  });
+
+  it('honours XDG_CONFIG_HOME', () => {
+    expect(kiloConfigPath(ctx({ XDG_CONFIG_HOME: '/x/cfg' }))).toBe('/x/cfg/kilo/kilo.jsonc');
+  });
+
+  it('KILO_CONFIG wins over XDG', () => {
+    expect(kiloConfigPath(ctx({ XDG_CONFIG_HOME: '/x/cfg', KILO_CONFIG: '/custom/k.jsonc' }))).toBe(
+      '/custom/k.jsonc',
+    );
+  });
+});
+
+describe('kiloAdapter.apply — неожиданная форма узла (0.4.5)', () => {
+  it('refuses when `provider` is not an object: no write, no backup', async () => {
+    const original = '{\n  // мой конфиг\n  "provider": "x",\n}';
+    writeFileSync(configPath, original);
+
+    await expect(kiloAdapter.apply(input)).rejects.toThrow(
+      /kilo\.jsonc.*"provider" is a string.*Nothing was written/s,
+    );
+
+    expect(readFileSync(configPath, 'utf-8')).toBe(original);
+    expect(readdirSync(tmpDir)).toEqual(['kilo.jsonc']);
   });
 });

@@ -29,15 +29,14 @@ export const BASE_URL_OPENAI = 'https://gate.joingonka.ai/v1';
 export const DEFAULT_MODEL = 'MiniMaxAI/MiniMax-M2.7';
 
 /**
- * Альтернативная модель GLM-5.3 Flash (Z.ai) — reasoning, контекст 390K.
- * В сети Gonka с 16.09.2026, пришла на смену ушедшей Kimi K2.6.
- * Выбирается через CLI `--model glm`.
+ * GLM-5.3 Flash (Z.ai) — reasoning, контекст 390K (самый длинный в сети),
+ * потолок ответа 8192. В сети Gonka с 16.09.2026. Выбирается `--model glm`.
  */
 export const GLM_MODEL = 'zai-org/GLM-5.3-Flash';
 
 /**
- * Альтернативная модель DeepSeek V4 Flash — контекст 380K (самый длинный в
- * сети), reasoning + tool calling. Выбирается через CLI `--model deepseek`.
+ * DeepSeek V4 Flash — контекст 380K и самый высокий в сети потолок ответа
+ * (32768), reasoning + tool calling. Выбирается `--model deepseek`.
  */
 export const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash-0731';
 
@@ -92,61 +91,75 @@ export interface OpenClawModelSpec {
   name: string;
   maxTokens: number;
   aliasFor?: string;
-  /** Пер-модельный контекст; если не задан — общий OPENCLAW_CONTEXT_WINDOW (200K). */
+  /** Окно контекста модели; если не задано — OPENCLAW_CONTEXT_WINDOW (200K, как у MiniMax). */
   contextWindow?: number;
   /** Модель отдаёт reasoning-контент (Kilo помечает `reasoning:true`). */
   reasoning?: boolean;
 }
 
 /**
- * Общий context window сети — контекст MiniMax (совпадает с SSOT). 200000 —
- * эмпирически подтверждён (SSOT model-specs.ts: вход 200 011 токенов принят,
- * HTTP 200). Ранее заявленные 131072 были занижены. У моделей с другим
- * контекстом (DeepSeek V4 Flash — 380000, GLM-5.3 Flash — 390000) он задаётся
- * пер-модельно в OPENCLAW_MODELS.
+ * Контекст по умолчанию — окно MiniMax, 200000 (замер: вход 200 011 токенов
+ * принят, HTTP 200). Это НЕ «общее окно сети»: у DeepSeek V4 Flash 380000, у
+ * GLM-5.3 Flash 390000 — они заданы пер-модельно в OPENCLAW_MODELS. Сюда падает
+ * только модель без собственного значения и id вне каталога.
  */
 export const OPENCLAW_CONTEXT_WINDOW = 200000;
 
-/**
- * Единая тарификация для каталога OpenClaw ($/1M токенов).
- *
- * Значения справочные — реальная тарификация считается на нашей стороне
- * (gateway), здесь они нужны лишь чтобы OpenClaw показывал примерную
- * стоимость в UI. cacheRead/cacheWrite приравнены к input.
- *
- * ⚠ Это ФОЛБЭК. Цена в GNK фиксирована (33/99 nGNK за токен), а в долларах
- * плавает вместе с курсом GNK, поэтому установщик берёт живые значения из
- * публичного GET /api/pricing и подставляет их; сюда падает только при
- * недоступности шлюза. Срез 19.09.2026: $0.0062 вход / $0.0185 выход за 1M.
- * До 0.4.5 здесь стояли 0.07/0.1 — UI OpenClaw и Pi завышал стоимость в 5–11 раз.
- */
-const OPENCLAW_COST = {
-  input: 0.0062,
-  output: 0.0185,
-  cacheRead: 0.0062,
-  cacheWrite: 0.0062,
-} as const;
+/** Цена модели, $ за 1M токенов: вход и выход. */
+export interface ModelPrice {
+  input: number;
+  output: number;
+}
 
 /**
- * Каталог моделей, которые адаптер прописывает в OpenClaw-провайдер `gonka`.
+ * ФОЛБЭК цены для каталогов OpenClaw и Pi ($/1M токенов).
  *
- * Базовые модели (с alias). Primary (agents.defaults.model.primary) — MiniMax-M2.7
- * (operational, через DEFAULT_MODEL); GLM-5.3 Flash — long-context reasoning-вариант
- * (в сети с 16.09.2026, пока 2 хоста, поэтому НЕ primary). Веб-поиск в OpenClaw — через его СОБСТВЕННЫЙ
- * встроенный tools.web (client-side); серверный web_search gateway активируется
- * per-request (plugins mode:'agent') и здесь модель-варианты не нужны.
- * SSOT по id/maxTokens — gateway/src/modules/network-status/model-specs.ts.
+ * Значения справочные — реальная тарификация считается на шлюзе, здесь они
+ * нужны лишь чтобы инструмент показывал примерную стоимость в своём UI.
+ *
+ * Цена в GNK фиксирована (33/99 nGNK за токен), а в долларах плавает вместе с
+ * курсом GNK, поэтому установщик берёт живые значения из публичного
+ * GET /api/pricing (core/pricing.ts) и передаёт их в функции записи модели;
+ * сюда они падают только при недоступности шлюза.
+ * Срез 19.09.2026: $0.0062 вход / $0.0185 выход за 1M.
+ */
+const FALLBACK_PRICE: ModelPrice = { input: 0.0062, output: 0.0185 };
+
+/**
+ * Блок `cost` записи модели. Кеш-чтение и кеш-запись приравнены ко входу:
+ * отдельного тарифа на кеш у шлюза нет.
+ */
+function modelCost(price?: ModelPrice): Record<string, number> {
+  const { input, output } = price ?? FALLBACK_PRICE;
+  return { input, output, cacheRead: input, cacheWrite: input };
+}
+
+/**
+ * Каталог моделей сети Gonka — общий для всех адаптеров (исторически назван по
+ * первому потребителю, OpenClaw).
+ *
+ * SSOT по id и лимитам — gateway/src/modules/network-status/model-specs.ts;
+ * здесь РУЧНОЙ дубль, поэтому при каждом релизе сверять с живым
+ * GET https://gate.joingonka.ai/v1/models (`context_length`,
+ * `top_provider.max_completion_tokens`). Сверено 21.09.2026 — совпадает.
+ *
+ * Потолок ответа у моделей РАЗНЫЙ: MiniMax и GLM — 8192, DeepSeek — 32768.
+ * Кто из них primary у конкретного инструмента — решают CODING_AGENT_DEFAULT_MODEL
+ * и DEFAULT_MODEL, а не порядок в этом списке.
+ *
+ * История состава одной строкой: Qwen3 (до 06.2026), Kimi K2.6 и GLM-5.2-FP8
+ * (до 11.09.2026) выведены из сети; их id живут только в core/models.ts (RETIRED).
+ *
+ * Веб-поиск в OpenClaw — через его СОБСТВЕННЫЙ встроенный tools.web
+ * (client-side); серверный web_search шлюза включается per-request, отдельные
+ * модель-варианты для него не нужны.
  */
 export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
-  // maxTokens=8192 — единый потолок выдачи (max_output) всех моделей: gateway
-  // клипует max_tokens до 8192 (SSOT model-specs.ts; MiniMax доказан 8192,
-  // finish_reason:length). Ранее стояли заниженные 3072/4096.
+  // Окно 200000 (общее значение по умолчанию), потолок ответа 8192 — замер:
+  // на 8192 ответ обрывается с finish_reason:length. Самая ёмкая модель сети.
   { id: 'MiniMaxAI/MiniMax-M2.7', name: 'MiniMax M2.7 (Gonka)', maxTokens: 8192, aliasFor: 'minimax-m2.7' },
-  // Контекст 380000 — замерен на проде 13.08.2026 (вход 381K токенов принят,
-  // SSOT model-specs.ts). Самый длинный контекст в сети Gonka.
-  // maxTokens 32768 (НЕ общие 8192): замер 17.08.2026 показал, что 8192 были не
-  // свойством модели, а единым клипом gateway — для DeepSeek клип поднят.
-  // Сверено live: GET /v1/models → top_provider.max_completion_tokens=32768.
+  // Окно 380000 — замер на проде 13.08.2026 (вход 381K токенов принят).
+  // Потолок ответа 32768 — самый высокий в сети (замер 17.08.2026).
   {
     id: 'deepseek-ai/DeepSeek-V4-Flash-0731',
     name: 'DeepSeek V4 Flash (Gonka)',
@@ -155,9 +168,9 @@ export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
     contextWindow: 380000,
     reasoning: true,
   },
-  // GLM-5.3 Flash (Z.ai) — в сети Gonka с 16.09.2026 взамен ушедших Kimi K2.6 и
-  // GLM-5.2-FP8. Контекст 390000 и потолок выдачи 8192 — ЗАМЕР 16.09.2026
-  // (on-chain --max-model-len 400000 слепо не копируем: публикуем доказанный минимум).
+  // GLM-5.3 Flash (Z.ai), в сети с 16.09.2026. Окно 390000 (самое длинное в
+  // сети) и потолок ответа 8192 — ЗАМЕР 16.09.2026: on-chain --max-model-len
+  // 400000 слепо не копируем, публикуем доказанный минимум.
   // Reasoning съедает несколько сотен токенов ответа: клиенту нужен max_tokens ≥ 600
   // либо stream, для коротких задач — reasoning_effort:'low'.
   {
@@ -192,16 +205,65 @@ export const OPENCLAW_DEFAULT_FALLBACKS: readonly string[] = [
  * Сборка JSON-записи модели для каталога провайдера OpenClaw.
  * Вынесено сюда, чтобы форма записи (cost/input/contextWindow) была SSOT
  * и не дублировалась в адаптере/тестах.
+ *
+ * @param price живая цена модели (core/pricing.ts); без неё — FALLBACK_PRICE.
  */
-export function openclawModelEntry(spec: OpenClawModelSpec): Record<string, unknown> {
+export function openclawModelEntry(
+  spec: OpenClawModelSpec,
+  price?: ModelPrice,
+): Record<string, unknown> {
   return {
     id: spec.id,
     name: spec.name,
     input: ['text'],
     contextWindow: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW,
     maxTokens: spec.maxTokens,
-    cost: { ...OPENCLAW_COST },
+    cost: modelCost(price),
   };
+}
+
+/**
+ * Реальные лимиты модели — для печатных инструкций UI-адаптеров (Cline, Cursor,
+ * JetBrains, ZCode, Continue, Aider, Roo): у этих инструментов окно и потолок
+ * ответа вводит человек, и без подсказки он оставит дефолты инструмента
+ * (64K у JetBrains, 128K у Cline), которые не совпадают ни с одной моделью сети.
+ */
+export interface ModelLimits {
+  contextWindow: number;
+  maxOutput: number;
+  /** false — id вне каталога установщика, значения осторожные, а не измеренные. */
+  known: boolean;
+}
+
+/**
+ * Лимиты модели по id. Для id вне каталога — окно по умолчанию и НАИМЕНЬШИЙ
+ * потолок ответа по каталогу: занизить безопаснее, чем пообещать инструменту
+ * окно, которого у модели нет (он перестанет вовремя сжимать историю).
+ */
+export function modelLimits(modelId: string): ModelLimits {
+  const spec = OPENCLAW_MODELS.find((m) => m.id === modelId);
+  if (spec) {
+    return {
+      contextWindow: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW,
+      maxOutput: spec.maxTokens,
+      known: true,
+    };
+  }
+  return {
+    contextWindow: OPENCLAW_CONTEXT_WINDOW,
+    maxOutput: Math.min(...OPENCLAW_MODELS.map((m) => m.maxTokens)),
+    known: false,
+  };
+}
+
+/** Строка с лимитами модели для инструментов, где вводить их некуда. */
+export function formatModelLimits(modelId: string): string {
+  const { contextWindow, maxOutput, known } = modelLimits(modelId);
+  const line = `Model limits: context window ${contextWindow} tokens, max output ${maxOutput} tokens.`;
+  return known
+    ? line
+    : `${line} (${modelId} is not in the installer catalog — conservative values; ` +
+        `check ${BASE_URL_OPENAI}/models)`;
 }
 
 // --- opencode (https://opencode.ai) — opencode.json (провайдер) + auth.json (ключ, нативно) ---
@@ -291,16 +353,19 @@ export const PI_PROVIDER_API = 'openai-completions';
  * Запись модели для Pi: `{ id, name, input, contextWindow, maxTokens, cost, [reasoning] }`.
  * Схема совпадает с каталогом OpenClaw по смыслу полей, поэтому берём тот же
  * OpenClawModelSpec как SSOT. contextWindow/maxTokens задаём ЯВНО — дефолты Pi
- * (128000/16384) не совпадают с реальными лимитами сети.
+ * (128000/16384) не совпадают с реальными лимитами сети. `cost` у Pi — тоже
+ * $ за 1M токенов (док pi, docs/models.md: «Per-million-token rates»).
+ *
+ * @param price живая цена модели (core/pricing.ts); без неё — FALLBACK_PRICE.
  */
-export function piModelEntry(spec: OpenClawModelSpec): Record<string, unknown> {
+export function piModelEntry(spec: OpenClawModelSpec, price?: ModelPrice): Record<string, unknown> {
   const entry: Record<string, unknown> = {
     id: spec.id,
     name: spec.name,
     input: ['text'],
     contextWindow: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW,
     maxTokens: spec.maxTokens,
-    cost: { ...OPENCLAW_COST },
+    cost: modelCost(price),
   };
   if (spec.reasoning) entry.reasoning = true;
   return entry;

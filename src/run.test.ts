@@ -15,7 +15,7 @@
  * non-interactive.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { run } from './run.js';
@@ -222,5 +222,65 @@ describe('run() — модель и область установки (0.4.5)', 
       deps(),
     );
     expect(outcome.modelWarning).toMatch(/not in this installer/i);
+  });
+});
+
+describe('run() — живые цены (0.4.5)', () => {
+  const deps = (): RunDeps => ({
+    askTool: vi.fn(),
+    askApiKey: vi.fn().mockResolvedValue('jg-test123'),
+  });
+
+  /** fetch, который знает про /api/pricing; всё остальное — заглушка verify. */
+  const fetchWithPricing = (pricingBody: string | Error) =>
+    vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/pricing')) {
+        if (pricingBody instanceof Error) throw pricingBody;
+        return { ok: true, status: 200, text: async () => pricingBody };
+      }
+      return { ok: true, status: 200, text: async () => '{}' };
+    });
+
+  const openclawCost = () =>
+    JSON.parse(readFileSync(join(tmpDir, '.openclaw', 'openclaw.json'), 'utf-8')).models.providers
+      .gonka.models[0].cost;
+
+  it('asks the gateway once and hands the price to an adapter that writes prices', async () => {
+    const fetchMock = fetchWithPricing(
+      JSON.stringify({
+        models: [
+          {
+            model_id: 'MiniMaxAI/MiniMax-M2.7',
+            usd_per_million_tokens: 0.004,
+            usd_per_million_output: 0.012,
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await run({ tool: 'openclaw', verify: false }, deps());
+
+    expect(openclawCost()).toEqual({ input: 0.004, output: 0.012, cacheRead: 0.004, cacheWrite: 0.004 });
+    const pricingCalls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/pricing'));
+    expect(pricingCalls).toHaveLength(1);
+  });
+
+  it('falls back to the built-in price when the gateway cannot be reached', async () => {
+    vi.stubGlobal('fetch', fetchWithPricing(new Error('ENOTFOUND')));
+
+    await run({ tool: 'openclaw', verify: false }, deps());
+
+    expect(openclawCost().input).toBe(0.0062);
+    expect(openclawCost().output).toBe(0.0185);
+  });
+
+  it('does not go to the network for a tool that has no prices to write', async () => {
+    const fetchMock = fetchWithPricing('{}');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await run({ tool: 'cline', verify: false }, deps());
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

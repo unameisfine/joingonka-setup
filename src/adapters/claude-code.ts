@@ -145,16 +145,19 @@ function ensureGitIgnored(configPath: string): string | null {
 async function apply(input: ApplyInput): Promise<ApplyResult> {
   const configPath = resolvePath(input.scope);
 
-  // Читаем ДО бэкапа: settings.json может быть JSONC с комментариями, а
-  // неразбираемый файл означает отказ без записи (раньше он заменялся пустым).
+  // Порядок: прочитать → посчитать итоговый текст → и только потом бэкап и
+  // запись. settings.json может быть JSONC с комментариями; неразбираемый файл
+  // (раньше он заменялся пустым) или `env`, который не объект, означают отказ —
+  // и тогда на диске не появляется ничего, даже .bak.
   const doc = readJsonConfig(readRaw(configPath), configPath);
-  const backupPath = backup(configPath);
 
   const edits = buildEdits(input.model);
   edits[0] = { path: ['env', 'ANTHROPIC_AUTH_TOKEN'], value: input.apiKey };
+  const text = applyJsonEdits(doc.text, edits, configPath);
 
   // Файл содержит ключ → 0o600 (owner-only), как у остальных адаптеров.
-  await atomicWrite(configPath, applyJsonEdits(doc.text, edits), OWNER_ONLY_MODE);
+  const backupPath = backup(configPath);
+  await atomicWrite(configPath, text, OWNER_ONLY_MODE);
 
   const spec = specFor(input.model);
   const messages = [

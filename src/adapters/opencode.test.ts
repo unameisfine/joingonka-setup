@@ -6,10 +6,10 @@
  *     то, что пишет `opencode auth login` → Other. Оба merge-aware.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { opencodeAdapter } from './opencode.js';
+import { opencodeAdapter, opencodePaths } from './opencode.js';
 import { OPENCODE_DEFAULT_MODEL, DEEPSEEK_MODEL, GLM_MODEL } from '../constants.js';
 
 let tmpDir: string;
@@ -52,8 +52,15 @@ describe('opencodeAdapter.resolvePath', () => {
   });
   it('defaults to ~/.config/opencode/opencode.json', () => {
     delete process.env.OPENCODE_CONFIG;
-    expect(opencodeAdapter.resolvePath('user')).toMatch(/\.config\/opencode\/opencode\.json$/);
-    process.env.OPENCODE_CONFIG = configPath;
+    // XDG_CONFIG_HOME машины разработчика не должен влиять на проверку дефолта.
+    const xdg = process.env.XDG_CONFIG_HOME;
+    delete process.env.XDG_CONFIG_HOME;
+    try {
+      expect(opencodeAdapter.resolvePath('user')).toMatch(/\.config\/opencode\/opencode\.json$/);
+    } finally {
+      if (xdg !== undefined) process.env.XDG_CONFIG_HOME = xdg;
+      process.env.OPENCODE_CONFIG = configPath;
+    }
   });
 });
 
@@ -72,11 +79,12 @@ describe('opencodeAdapter.apply — provider block (opencode.json)', () => {
     expect(JSON.stringify(readConfig()).includes('jg-test123')).toBe(false);
   });
 
-  it('writes models with limit.output matching SSOT caps (both 8192)', async () => {
+  it('writes models with limit.output matching SSOT caps (8192, DeepSeek 32768)', async () => {
     await opencodeAdapter.apply(input());
     const models = readConfig().provider.joingonka.models;
     expect(models['zai-org/GLM-5.3-Flash'].limit.output).toBe(8192);
     expect(models['MiniMaxAI/MiniMax-M2.7'].limit.output).toBe(8192);
+    expect(models[DEEPSEEK_MODEL].limit.output).toBe(32768);
     expect(models['zai-org/GLM-5.3-Flash'].limit.context).toBe(390000);
   });
 
@@ -203,5 +211,136 @@ describe('opencodeAdapter.apply — сохранность чужого (0.4.5)'
     const result = await opencodeAdapter.apply(input());
     expect(readConfig().model).toBe('anthropic/claude-opus-5');
     expect(result.messages.join('\n')).toContain('anthropic/claude-opus-5');
+  });
+});
+
+describe('opencodeAdapter.apply — ушедшие модели ВНЕ каталога провайдера (0.4.5)', () => {
+  // Поля сверены со схемой opencode (packages/core/src/v1/config/*.ts, 21.09.2026):
+  // small_model, agent.<имя>.model, mode.<имя>.model (@deprecated), command.<имя>.model.
+  const KIMI = 'joingonka/moonshotai/Kimi-K2.6';
+
+  const seedStale = () =>
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          model: 'anthropic/claude-opus-5',
+          small_model: KIMI,
+          agent: {
+            plan: { model: KIMI, prompt: 'plan carefully' },
+            build: { model: 'anthropic/claude-opus-5' },
+            review: { model: `joingonka/${GLM_MODEL}` },
+          },
+          mode: { legacy: { model: KIMI } },
+          command: { test: { template: 'run tests', model: KIMI } },
+        },
+        null,
+        2,
+      ),
+    );
+
+  it('replaces our retired model everywhere and keeps foreign and live refs', async () => {
+    seedStale();
+
+    const result = await opencodeAdapter.apply(input());
+
+    const cfg = readConfig();
+    expect(cfg.small_model).toBe(OPENCODE_DEFAULT_MODEL);
+    expect(cfg.agent.plan).toEqual({ model: OPENCODE_DEFAULT_MODEL, prompt: 'plan carefully' });
+    expect(cfg.mode.legacy.model).toBe(OPENCODE_DEFAULT_MODEL);
+    expect(cfg.command.test).toEqual({ template: 'run tests', model: OPENCODE_DEFAULT_MODEL });
+    // Чужие и актуальные наши ссылки целы.
+    expect(cfg.model).toBe('anthropic/claude-opus-5');
+    expect(cfg.agent.build.model).toBe('anthropic/claude-opus-5');
+    expect(cfg.agent.review.model).toBe(`joingonka/${GLM_MODEL}`);
+
+    expect(readFileSync(configPath, 'utf-8')).not.toContain('Kimi');
+    expect(result.messages.join('\n')).toMatch(/4 references.*no longer served/i);
+  });
+
+  it('uses an explicit --model as the replacement', async () => {
+    seedStale();
+
+    await opencodeAdapter.apply({ ...input({ model: GLM_MODEL }), modelExplicit: true });
+
+    expect(readConfig().small_model).toBe(`joingonka/${GLM_MODEL}`);
+    expect(readConfig().agent.plan.model).toBe(`joingonka/${GLM_MODEL}`);
+  });
+
+  it('says nothing about retired models on a clean config', async () => {
+    const result = await opencodeAdapter.apply(input());
+    expect(result.messages.join('\n')).not.toMatch(/no longer served/i);
+  });
+});
+
+describe('opencodePaths — где opencode ищет файлы (0.4.5)', () => {
+  // opencode берёт каталоги из npm-пакета xdg-basedir (packages/core/src/global.ts):
+  // config = <XDG_CONFIG_HOME|~/.config>/opencode, data = <XDG_DATA_HOME|~/.local/share>/opencode.
+  const ctx = (env: NodeJS.ProcessEnv) => ({ platform: 'linux' as const, env, home: '/home/u' });
+
+  it('defaults to ~/.config/opencode/opencode.json and ~/.local/share/opencode/auth.json', () => {
+    expect(opencodePaths(ctx({}))).toEqual({
+      config: '/home/u/.config/opencode/opencode.json',
+      auth: '/home/u/.local/share/opencode/auth.json',
+    });
+  });
+
+  it('honours XDG_CONFIG_HOME and XDG_DATA_HOME', () => {
+    expect(opencodePaths(ctx({ XDG_CONFIG_HOME: '/x/cfg', XDG_DATA_HOME: '/x/data' }))).toEqual({
+      config: '/x/cfg/opencode/opencode.json',
+      auth: '/x/data/opencode/auth.json',
+    });
+  });
+
+  it('explicit OPENCODE_CONFIG / OPENCODE_AUTH_JSON win over XDG', () => {
+    const paths = opencodePaths(
+      ctx({
+        XDG_CONFIG_HOME: '/x/cfg',
+        XDG_DATA_HOME: '/x/data',
+        OPENCODE_CONFIG: '/custom/oc.json',
+        OPENCODE_AUTH_JSON: '/custom/auth.json',
+      }),
+    );
+    expect(paths).toEqual({ config: '/custom/oc.json', auth: '/custom/auth.json' });
+  });
+
+  it('uses the same home-based layout on Windows (xdg-basedir has no special case)', () => {
+    const paths = opencodePaths({ platform: 'win32', env: {}, home: 'C:\\Users\\u' });
+    expect(paths.config).toBe('C:\\Users\\u\\.config\\opencode\\opencode.json');
+    expect(paths.auth).toBe('C:\\Users\\u\\.local\\share\\opencode\\auth.json');
+  });
+});
+
+describe('opencodeAdapter.apply — неожиданная форма узла (0.4.5)', () => {
+  // Оба итоговых текста (opencode.json и auth.json) считаются ДО первого бэкапа и
+  // первой записи: отказ на втором файле не должен оставлять первый уже изменённым.
+  const files = () => readdirSync(tmpDir).sort();
+
+  it('refuses when `provider` is not an object: nothing written, no backups', async () => {
+    const original = '{ "provider": "anthropic" }';
+    writeFileSync(configPath, original);
+    writeFileSync(authPath, '{}');
+
+    await expect(opencodeAdapter.apply(input())).rejects.toThrow(
+      /opencode\.json.*"provider" is a string.*Nothing was written/s,
+    );
+
+    expect(readFileSync(configPath, 'utf-8')).toBe(original);
+    expect(readFileSync(authPath, 'utf-8')).toBe('{}');
+    expect(files()).toEqual(['auth.json', 'opencode.json']);
+  });
+
+  it('refuses when our auth.json entry is not an object — and leaves opencode.json alone too', async () => {
+    writeFileSync(configPath, '{ "theme": "tokyonight" }');
+    const auth = '{ "joingonka": "jg-old-format", "openai": { "type": "api", "key": "sk-x" } }';
+    writeFileSync(authPath, auth);
+
+    await expect(opencodeAdapter.apply(input())).rejects.toThrow(
+      /auth\.json.*"joingonka" is a string.*Nothing was written/s,
+    );
+
+    expect(readFileSync(configPath, 'utf-8')).toBe('{ "theme": "tokyonight" }');
+    expect(readFileSync(authPath, 'utf-8')).toBe(auth);
+    expect(files()).toEqual(['auth.json', 'opencode.json']);
   });
 });

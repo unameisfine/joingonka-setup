@@ -83,4 +83,68 @@ describe('applyJsonEdits', () => {
     const out = applyJsonEdits('{}', [{ path: ['a'], value: 1 }]);
     expect(out.endsWith('\n')).toBe(true);
   });
+
+  it('refuses to hand back text that no longer parses', () => {
+    // ★ Страховка от дефекта самой библиотеки. jsonc-parser 3.3.1 портит текст,
+    // удаляя ПОСЛЕДНИЙ элемент однострочного массива: из ["x", "stale"] выходит
+    // `"x""]`. Такой результат нельзя писать на диск поверх рабочего конфига.
+    // Адаптеры обходят дефект (заменяют массив целиком), а эта проверка ловит
+    // всё, чего мы ещё не знаем.
+    expect(() =>
+      applyJsonEdits('{ "fallbacks": ["x", "stale"] }', [
+        { path: ['fallbacks', 1], value: undefined },
+      ]),
+    ).toThrow(/Nothing was written/);
+  });
+
+  it('removes array items safely when the whole array is replaced', () => {
+    const out = applyJsonEdits('{ "fallbacks": ["x", "stale"] } // хвост', [
+      { path: ['fallbacks'], value: ['x'] },
+    ]);
+    expect(out).toContain('// хвост');
+    expect(JSON.parse(out.replace(/\/\/.*$/gm, '')).fallbacks).toEqual(['x']);
+  });
 });
+
+describe('applyJsonEdits — неожиданная форма узла на пути правки', () => {
+  // ★ Правка `provider.joingonka.npm` требует, чтобы `provider` был объектом. Если
+  // там примитив (рукописный конфиг, чужой инструмент), jsonc-parser бросает
+  // сырое «Can not add index to parent of type string». Человеку нужно другое:
+  // какой файл, какой ключ, и что на диск ничего не попало.
+  const FILE = '/home/u/.config/kilo/kilo.jsonc';
+
+  it('names the file and the key, and says nothing was written', () => {
+    expect(() =>
+      applyJsonEdits('{ "provider": "x" }', [{ path: ['provider', 'joingonka', 'npm'], value: 'n' }], FILE),
+    ).toThrow(/kilo\.jsonc.*"provider" is a string.*Nothing was written/s);
+  });
+
+  it('points at the deepest existing key that blocks the edit', () => {
+    expect(() =>
+      applyJsonEdits(
+        '{ "provider": { "joingonka": 5 } }',
+        [{ path: ['provider', 'joingonka', 'options', 'baseURL'], value: 'u' }],
+        FILE,
+      ),
+    ).toThrow(/"provider → joingonka" is a number/);
+  });
+
+  it('treats null, booleans and arrays the same way', () => {
+    const edit = [{ path: ['env', 'ANTHROPIC_MODEL'], value: 'm' }];
+    expect(() => applyJsonEdits('{ "env": null }', edit, FILE)).toThrow(/"env" is null.*Nothing was written/s);
+    expect(() => applyJsonEdits('{ "env": true }', edit, FILE)).toThrow(/"env" is a boolean/);
+    expect(() => applyJsonEdits('{ "env": [] }', edit, FILE)).toThrow(/"env" is an array/);
+  });
+
+  it('stays friendly when the caller did not pass a file path', () => {
+    expect(() =>
+      applyJsonEdits('{ "env": 5 }', [{ path: ['env', 'A'], value: 'b' }]),
+    ).toThrow(/"env" is a number.*Nothing was written/s);
+  });
+
+  it('does not get in the way of ordinary edits that create missing parents', () => {
+    const out = applyJsonEdits('{ "theme": "dark" }', [{ path: ['a', 'b', 'c'], value: 1 }], FILE);
+    expect(JSON.parse(out).a.b.c).toBe(1);
+  });
+});
+

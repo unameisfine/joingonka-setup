@@ -72,4 +72,17 @@ describe('zcodeAdapter', () => {
     await zcodeAdapter.apply(input);
     expect(readdirSync(tmpDir).length).toBe(0);
   });
+
+  // https://zcode.z.ai/en/docs/configuration («Custom Providers», «Per-Model
+  // Advanced Settings»), сверено 21.09.2026.
+  it('reminds to turn on the enable switch — a saved provider is off by default', async () => {
+    const joined = (await zcodeAdapter.apply(input)).messages.join('\n');
+    expect(joined).toMatch(/enable switch/i);
+  });
+
+  it('sends the limits to the Advanced panel of the model', async () => {
+    const joined = (await zcodeAdapter.apply({ ...input, model: DEEPSEEK_MODEL })).messages.join('\n');
+    expect(joined).toContain('Advanced');
+    expect(joined).toContain('Max output tokens: 32768');
+  });
 });

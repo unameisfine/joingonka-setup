@@ -8,7 +8,8 @@
  * - settings.json — главный конфиг редактора с КОММЕНТАРИЯМИ: правки точечные
  *   через jsonc-parser, комментарии и чужие настройки выживают;
  * - схема Zed: max_tokens = КОНТЕКСТ, max_output_tokens = потолок выдачи;
- * - XDG_CONFIG_HOME уважается; битый JSONC → свежий файл + бэкап.
+ * - путь зависит от платформы (Linux — XDG_CONFIG_HOME, macOS — ~/.config,
+ *   Windows — %APPDATA%\Zed); битый JSONC → отказ без записи.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
@@ -23,7 +24,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseJsonc } from 'jsonc-parser';
-import { zedAdapter } from './zed.js';
+import { zedAdapter, zedSettingsPath } from './zed.js';
 import { DEFAULT_MODEL } from '../constants.js';
 
 let tmpDir: string;
@@ -249,5 +250,133 @@ describe('zedAdapter.apply — явная модель (0.4.5)', () => {
       provider: 'joingonka',
       model: 'zai-org/GLM-5.3-Flash',
     });
+  });
+});
+
+describe('zedSettingsPath — где Zed держит settings.json (0.4.5)', () => {
+  // Дока Zed (docs/src/configuring-zed.md, «Settings Files») и исходник
+  // crates/paths/src/paths.rs::config_dir, сверено 21.09.2026:
+  //   macOS   ~/.config/zed/settings.json            (XDG НЕ учитывается)
+  //   Linux   $XDG_CONFIG_HOME/zed/settings.json или ~/.config/zed/settings.json
+  //   Windows %APPDATA%\Zed\settings.json
+  it('Windows: %APPDATA%\\Zed\\settings.json', () => {
+    const path = zedSettingsPath({
+      platform: 'win32',
+      env: { APPDATA: 'C:\\Users\\u\\AppData\\Roaming' },
+      home: 'C:\\Users\\u',
+    });
+    expect(path).toBe('C:\\Users\\u\\AppData\\Roaming\\Zed\\settings.json');
+  });
+
+  it('Windows without APPDATA falls back to the Roaming folder under home', () => {
+    const path = zedSettingsPath({ platform: 'win32', env: {}, home: 'C:\\Users\\u' });
+    expect(path).toBe('C:\\Users\\u\\AppData\\Roaming\\Zed\\settings.json');
+  });
+
+  it('Windows ignores XDG_CONFIG_HOME', () => {
+    const path = zedSettingsPath({
+      platform: 'win32',
+      env: { APPDATA: 'C:\\R', XDG_CONFIG_HOME: 'C:\\xdg' },
+      home: 'C:\\Users\\u',
+    });
+    expect(path).toBe('C:\\R\\Zed\\settings.json');
+  });
+
+  it('Linux honours XDG_CONFIG_HOME', () => {
+    const ctx = { platform: 'linux' as const, home: '/home/u' };
+    expect(zedSettingsPath({ ...ctx, env: {} })).toBe('/home/u/.config/zed/settings.json');
+    expect(zedSettingsPath({ ...ctx, env: { XDG_CONFIG_HOME: '/x' } })).toBe('/x/zed/settings.json');
+  });
+
+  it('macOS always uses ~/.config/zed — Zed does not read XDG_CONFIG_HOME there', () => {
+    const path = zedSettingsPath({
+      platform: 'darwin',
+      env: { XDG_CONFIG_HOME: '/Users/u/dotfiles' },
+      home: '/Users/u',
+    });
+    expect(path).toBe('/Users/u/.config/zed/settings.json');
+  });
+});
+
+describe('zedAdapter.apply — ушедшие модели в настройках агента (0.4.5)', () => {
+  // Схема Zed (crates/settings_content/src/agent.rs, 21.09.2026): default_model,
+  // subagent_model, inline_assistant_model, commit_message_model,
+  // thread_summary_model, compaction_model — { provider, model };
+  // favorite_models и inline_alternatives — массивы таких же записей.
+  const KIMI = 'moonshotai/Kimi-K2.6';
+
+  it('repoints our retired default_model at the requested model', async () => {
+    seed(
+      [
+        '{',
+        '  // агент',
+        '  "agent": {',
+        `    "default_model": { "provider": "joingonka", "model": "${KIMI}", "enable_thinking": true },`,
+        '    "commit_message_model": { "provider": "anthropic", "model": "claude-haiku-4-5" }',
+        '  }',
+        '}',
+      ].join('\n'),
+    );
+
+    const result = await zedAdapter.apply(input());
+
+    const agent = readConfig().agent;
+    // Меняем только model — соседние поля записи целы.
+    expect(agent.default_model).toEqual({
+      provider: 'joingonka',
+      model: DEFAULT_MODEL,
+      enable_thinking: true,
+    });
+    expect(agent.commit_message_model).toEqual({ provider: 'anthropic', model: 'claude-haiku-4-5' });
+    expect(readRawText()).toContain('// агент');
+    expect(readRawText()).not.toContain('Kimi');
+    expect(result.messages.join('\n')).toMatch(/1 reference.*no longer served/i);
+  });
+
+  it('covers the feature-specific models and the model lists', async () => {
+    seed(
+      JSON.stringify({
+        agent: {
+          thread_summary_model: { provider: 'joingonka', model: KIMI },
+          compaction_model: { provider: 'joingonka', model: 'zai-org/GLM-5.3-Flash' },
+          favorite_models: [
+            { provider: 'joingonka', model: KIMI },
+            { provider: 'openai', model: 'gpt-5.4' },
+          ],
+          inline_alternatives: [{ provider: 'joingonka', model: KIMI }],
+        },
+      }),
+    );
+
+    await zedAdapter.apply(input());
+
+    const agent = readConfig().agent;
+    expect(agent.thread_summary_model.model).toBe(DEFAULT_MODEL);
+    expect(agent.compaction_model.model).toBe('zai-org/GLM-5.3-Flash'); // актуальная — цела
+    expect(agent.favorite_models).toEqual([{ provider: 'openai', model: 'gpt-5.4' }]);
+    expect(agent.inline_alternatives).toEqual([]);
+  });
+
+  it('leaves a foreign provider alone even when the model name looks unknown', async () => {
+    seed(JSON.stringify({ agent: { default_model: { provider: 'openai', model: KIMI } } }));
+
+    const result = await zedAdapter.apply(input());
+
+    expect(readConfig().agent.default_model).toEqual({ provider: 'openai', model: KIMI });
+    expect(result.messages.join('\n')).not.toMatch(/no longer served/i);
+  });
+});
+
+describe('zedAdapter.apply — неожиданная форма узла (0.4.5)', () => {
+  it('refuses when `language_models` is not an object: no write, no backup', async () => {
+    const original = '{\n  // my theme\n  "theme": "Ayu Dark",\n  "language_models": false\n}';
+    seed(original);
+
+    await expect(zedAdapter.apply(input())).rejects.toThrow(
+      /settings\.json.*"language_models" is a boolean.*Nothing was written/s,
+    );
+
+    expect(readRawText()).toBe(original);
+    expect(readdirSync(join(tmpDir, '.config', 'zed'))).toEqual(['settings.json']);
   });
 });

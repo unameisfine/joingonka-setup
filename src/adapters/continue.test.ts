@@ -26,4 +26,29 @@ describe('continueAdapter', () => {
     const text = (await continueAdapter.apply(input)).messages.join('\n');
     expect(text).toContain('capabilities: [tool_use]');
   });
+
+  // https://docs.continue.dev/reference (исходник docs/reference.mdx): name, version
+  // и schema — «required»; без них новый config.yaml не загрузится.
+  it('gives the required header for a brand-new config.yaml', async () => {
+    const text = (await continueAdapter.apply(input)).messages.join('\n');
+    expect(text).toMatch(/^\s*name: /m);
+    expect(text).toMatch(/^\s*version: /m);
+    expect(text).toContain('schema: v1');
+    expect(text).toMatch(/^\s*models:/m);
+  });
+
+  it('declares the real limits of the chosen model', async () => {
+    const text = (await continueAdapter.apply(input)).messages.join('\n');
+    expect(text).toContain('defaultCompletionOptions:');
+    expect(text).toContain('contextLength: 390000');
+    expect(text).toContain('maxTokens: 8192');
+  });
+
+  it('is honest that Continue is no longer developed', async () => {
+    // continue.dev (21.09.2026): «Continue has joined Cursor»; README репозитория:
+    // «no longer actively maintained and is read-only», финальный релиз 2.0.0.
+    const text = (await continueAdapter.apply(input)).messages.join('\n');
+    expect(text).toMatch(/acquired by Cursor/i);
+    expect(text).toMatch(/no longer (actively )?(maintained|developed)/i);
+  });
 });

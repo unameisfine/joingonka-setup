@@ -4,7 +4,8 @@
  * Склеивает шаги, не зная деталей конкретных инструментов:
  *   1. выбрать инструмент (явный --tool или интерактивный select);
  *   2. получить API-ключ (из env в non-interactive, иначе password-промпт);
- *   3. определить модель (default / шорткат glm|deepseek / явный id);
+ *   3. определить модель (default / шорткат minimax|deepseek|glm / явный id);
+ *   3a. запросить живые цены, если адаптер пишет их в конфиг;
  *   4. вызвать adapter.apply().
  *
  * Промпты инъектируются через deps — это делает оркестратор полностью
@@ -15,6 +16,7 @@ import { canonicalModel } from './core/models.js';
 import { getAdapter, listTools } from './adapters/registry.js';
 import type { ApplyResult, Scope } from './adapters/types.js';
 import { verifyConfig, type VerifyResult } from './core/verify.js';
+import { fetchLivePricing } from './core/pricing.js';
 
 /** Опции запуска (из CLI-аргументов). */
 export interface RunOptions {
@@ -99,8 +101,13 @@ export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcom
   const modelExplicit = typeof options.model === 'string' && options.model.trim() !== '';
   const { model, warning: modelWarning } = canonicalModel(options.model, adapter.defaultModel);
 
+  // 3a. Живые цены — один запрос и только для адаптера, который пишет `cost`
+  //     в конфиг (OpenClaw, Pi). Цена справочная: недоступный шлюз даёт null, и
+  //     адаптер молча берёт константу — установку это не останавливает.
+  const pricing = adapter.wantsPricing ? await fetchLivePricing() : undefined;
+
   // 4. Применяем.
-  const result = await adapter.apply({ apiKey, model, scope, modelExplicit });
+  const result = await adapter.apply({ apiKey, model, scope, modelExplicit, pricing });
 
   // 5. Live-проверка: реальный запрос к gate записанными ключом+моделью —
   //    подтверждает, что настройка рабочая (ловит мёртвый ключ/URL/модель —

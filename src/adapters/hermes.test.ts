@@ -14,8 +14,10 @@
  *   custom_providers), чужие поля внутри model и КОММЕНТАРИИ сохраняются;
  * - reconcile: устаревшая модель в model.model перезаписывается;
  * - guard'ы: model-скаляр заменяется map'ом; корень-не-map и битый YAML →
- *   свежий конфиг (бэкап уже сделан);
- * - бэкап при наличии файла, идемпотентность, HERMES_HOME, chmod 600.
+ *   ОТКАЗ без записи и без бэкапа (конфиг пользователя не теряется);
+ * - наши убранные модели в fallback_providers / fallback_model вычищаются;
+ * - путь: HERMES_HOME, на Windows — %LOCALAPPDATA%\hermes;
+ * - бэкап при наличии файла, идемпотентность, chmod 600.
  *
  * HOME и HERMES_HOME перенаправляются в tmp; восстановление в afterEach.
  */
@@ -33,7 +35,7 @@ import {
 import { tmpdir, platform } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { hermesAdapter } from './hermes.js';
+import { hermesAdapter, hermesConfigPath } from './hermes.js';
 import { DEFAULT_MODEL, DEEPSEEK_MODEL } from '../constants.js';
 
 let tmpDir: string;
@@ -264,28 +266,41 @@ describe('hermesAdapter.apply — guards for malformed shapes', () => {
     expect(cfg.agent.max_iterations).toBe(10); // соседний ключ цел
   });
 
-  it('starts fresh (with backup) when the root is not a map', async () => {
+  // ★ До 0.4.5 оба случая ниже означали «стартуем с пустого документа»: файл
+  // перезаписывался, и человек терял mcp_servers, память, расписания — всё, что
+  // жило в config.yaml. Оставался .bak, о котором ещё надо догадаться. Теперь —
+  // отказ, как у JSON-адаптеров: ни записи, ни бэкапа.
+  const backups = () =>
+    readdirSync(join(tmpDir, '.hermes')).filter((f) => f.startsWith('config.yaml.bak.'));
+
+  it('refuses a config whose root is not a map (no write, no backup)', async () => {
     seedConfig('- just\n- a list\n');
 
-    await hermesAdapter.apply(input());
+    await expect(hermesAdapter.apply(input())).rejects.toThrow(/Nothing was written/);
 
-    expect(readConfig().model.provider).toBe('custom');
-    const backups = readdirSync(join(tmpDir, '.hermes')).filter((f) =>
-      f.startsWith('config.yaml.bak.'),
-    );
-    expect(backups.length).toBeGreaterThan(0);
+    expect(readFileSync(defaultConfigPath(), 'utf-8')).toBe('- just\n- a list\n');
+    expect(backups()).toHaveLength(0);
   });
 
-  it('handles malformed YAML by starting fresh and backing up', async () => {
-    seedConfig('model: [unclosed\n  broken: yes\n');
+  it('refuses malformed YAML and names the file and the line', async () => {
+    const broken = 'agent:\n  max_iterations: 10\nmodel: [unclosed\n  broken: yes\n';
+    seedConfig(broken);
+
+    await expect(hermesAdapter.apply(input())).rejects.toThrow(
+      /config\.yaml is not valid YAML.*line \d+.*Nothing was written/s,
+    );
+
+    expect(readFileSync(defaultConfigPath(), 'utf-8')).toBe(broken);
+    expect(backups()).toHaveLength(0);
+  });
+
+  it('treats an empty or comment-only file as a fresh config', async () => {
+    seedConfig('# мои заметки\n');
 
     await hermesAdapter.apply(input());
 
     expect(readConfig().model.provider).toBe('custom');
-    const backups = readdirSync(join(tmpDir, '.hermes')).filter((f) =>
-      f.startsWith('config.yaml.bak.'),
-    );
-    expect(backups.length).toBeGreaterThan(0);
+    expect(readFileSync(defaultConfigPath(), 'utf-8')).toContain('# мои заметки');
   });
 });
 
@@ -362,5 +377,128 @@ describe('hermesAdapter.apply — каноничный ключ модели (0.
     expect(cfg.model.key_env).toBeUndefined();
     expect(cfg.model.api_mode).toBeUndefined();
     expect(cfg.model.api_key).toBe('jg-test123');
+  });
+});
+
+describe('hermesConfigPath — где Hermes держит config.yaml (0.4.5)', () => {
+  // Исходник hermes_constants.py::_get_platform_default_hermes_home и дока
+  // website/docs/user-guide/windows-native.md, сверено 21.09.2026: на Windows —
+  // %LOCALAPPDATA%\hermes, иначе ~/.hermes; HERMES_HOME перекрывает оба, тильда
+  // в нём раскрывается (os.path.expanduser).
+  it('Windows: %LOCALAPPDATA%\\hermes\\config.yaml', () => {
+    const path = hermesConfigPath({
+      platform: 'win32',
+      env: { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' },
+      home: 'C:\\Users\\u',
+    });
+    expect(path).toBe('C:\\Users\\u\\AppData\\Local\\hermes\\config.yaml');
+  });
+
+  it('Windows without LOCALAPPDATA falls back to AppData\\Local under home', () => {
+    const path = hermesConfigPath({ platform: 'win32', env: {}, home: 'C:\\Users\\u' });
+    expect(path).toBe('C:\\Users\\u\\AppData\\Local\\hermes\\config.yaml');
+  });
+
+  it('HERMES_HOME wins on every platform and expands a leading tilde', () => {
+    expect(
+      hermesConfigPath({
+        platform: 'win32',
+        env: { HERMES_HOME: 'D:\\hermes', LOCALAPPDATA: 'C:\\L' },
+        home: 'C:\\Users\\u',
+      }),
+    ).toBe('D:\\hermes\\config.yaml');
+    expect(
+      hermesConfigPath({ platform: 'linux', env: { HERMES_HOME: '~/h' }, home: '/home/u' }),
+    ).toBe('/home/u/h/config.yaml');
+  });
+
+  it('Linux and macOS: ~/.hermes/config.yaml', () => {
+    expect(hermesConfigPath({ platform: 'linux', env: {}, home: '/home/u' })).toBe(
+      '/home/u/.hermes/config.yaml',
+    );
+    expect(hermesConfigPath({ platform: 'darwin', env: {}, home: '/Users/u' })).toBe(
+      '/Users/u/.hermes/config.yaml',
+    );
+  });
+});
+
+describe('hermesAdapter.apply — ушедшие модели в запасных (0.4.5)', () => {
+  // Формат сверен 21.09.2026 по hermes_cli/fallback_config.py и доке
+  // website/docs/user-guide/features/fallback-providers.md: `fallback_providers` —
+  // список записей { provider, model, base_url?, api_key?/key_env? } (или одна
+  // запись-словарь); `fallback_model` — прежний ключ той же формы.
+  it('drops fallback entries that point at our gateway with a retired model', async () => {
+    seedConfig(
+      [
+        '# запасные',
+        'fallback_providers:',
+        '  - provider: custom',
+        '    model: moonshotai/Kimi-K2.6',
+        '    base_url: https://gate.joingonka.ai/v1/',
+        '    api_key: jg-old',
+        '  - provider: openrouter',
+        '    model: moonshotai/Kimi-K2.6 # чужой провайдер — не наше дело',
+        '  - provider: custom',
+        '    model: zai-org/GLM-5.3-Flash',
+        '    base_url: https://gate.joingonka.ai/v1',
+      ].join('\n') + '\n',
+    );
+
+    const result = await hermesAdapter.apply(input());
+
+    expect(readConfig().fallback_providers).toEqual([
+      { provider: 'openrouter', model: 'moonshotai/Kimi-K2.6' },
+      {
+        provider: 'custom',
+        model: 'zai-org/GLM-5.3-Flash',
+        base_url: 'https://gate.joingonka.ai/v1',
+      },
+    ]);
+    const raw = readFileSync(defaultConfigPath(), 'utf-8');
+    expect(raw).toContain('# запасные');
+    expect(raw).toContain('# чужой провайдер — не наше дело');
+    expect(result.messages.join('\n')).toMatch(/1 reference.*no longer served/i);
+  });
+
+  it('removes the key when nothing is left, including the legacy single-entry form', async () => {
+    seedConfig(
+      [
+        'fallback_providers:',
+        '  - provider: custom',
+        '    model: moonshotai/Kimi-K2.6',
+        '    base_url: https://gate.joingonka.ai/v1',
+        'fallback_model:',
+        '  provider: custom',
+        '  model: Qwen/Qwen3-235B-A22B-Instruct-2507-FP8',
+        '  base_url: https://gate.joingonka.ai/v1',
+        'agent:',
+        '  max_iterations: 10',
+      ].join('\n') + '\n',
+    );
+
+    await hermesAdapter.apply(input());
+
+    const cfg = readConfig();
+    expect(cfg.fallback_providers).toBeUndefined();
+    expect(cfg.fallback_model).toBeUndefined();
+    expect(cfg.agent.max_iterations).toBe(10);
+  });
+
+  it('keeps a custom endpoint that is not ours, whatever its model is called', async () => {
+    const yaml =
+      [
+        'fallback_providers:',
+        '  - provider: custom',
+        '    model: moonshotai/Kimi-K2.6',
+        '    base_url: http://localhost:8000/v1',
+      ].join('\n') + '\n';
+    seedConfig(yaml);
+
+    const result = await hermesAdapter.apply(input());
+
+    expect(readConfig().fallback_providers).toEqual([
+      { provider: 'custom', model: 'moonshotai/Kimi-K2.6', base_url: 'http://localhost:8000/v1' },
+    ]);
+    expect(result.messages.join('\n')).not.toMatch(/no longer served/i);
   });
 });

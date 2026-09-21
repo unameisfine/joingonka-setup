@@ -15,21 +15,24 @@
  * переменная была в окружении процесса, а установщик её не персистит (ровно
  * те грабли, из-за которых env-ref убран у openclaw/kilo в 0.2.6).
  *
- * Дефолтная модель живёт в ДРУГОМ файле — ~/.pi/agent/settings.json
- * (`defaultProvider` + `defaultModel`). Пишем его только если он валиден или
- * отсутствует, и только если дефолт не задан ИЛИ указывает на нашу убранную
- * модель: чужой выбор пользователя не трогаем. Битый settings.json не
- * перезаписываем — провайдер работает и без него (в отличие от models.json,
- * без которого смысла нет).
+ * Дефолтная модель живёт в ДРУГОМ файле — settings.json рядом с models.json
+ * (`defaultProvider` + `defaultModel`). Пишем его только если дефолт не задан,
+ * указывает на нашу убранную модель ИЛИ пользователь задал `--model` явно:
+ * чужой выбор не трогаем.
  *
- * Каталог моделей нашего провайдера строим FRESH: устаревшие модели прошлых
- * версий установщика (напр. Qwen) исчезают при повторном запуске.
+ * ★ Правки ТОЧЕЧНЫЕ (core/json-config) в обоих файлах: чужие провайдеры, чужие
+ * поля внутри нашего блока, комментарии и форматирование остаются как были.
+ * Каталог моделей нашего провайдера при этом заменяется целиком — устаревшие
+ * модели прошлых версий установщика (напр. Qwen) исчезают при повторном запуске.
  *
- * Путь один для обоих scope (Pi читает глобальный каталог провайдеров).
- * Env PI_HOME (КАТАЛОГ) переопределяет ~/.pi.
+ * ★ Файл, который нельзя разобрать, — ОТКАЗ без записи и без бэкапа, причём оба
+ * файла читаются ДО первой записи. До 0.4.5 битый models.json заменялся свежим
+ * (пропадали провайдеры и ключи всех остальных сервисов пользователя), а битый
+ * settings.json обнаруживался уже после записи models.json — установка
+ * проходила наполовину.
+ *
+ * Путь один для обоих scope (Pi читает глобальный каталог) — см. piAgentDir.
  */
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import {
   BASE_URL_OPENAI,
   CODING_AGENT_DEFAULT_MODEL,
@@ -39,7 +42,17 @@ import {
   piModelEntry,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
-import { deepMergeJson, type JsonObject } from '../core/merge.js';
+import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import type { JsonObject } from '../core/merge.js';
+import {
+  currentPathContext,
+  envValue,
+  expandTilde,
+  pathApi,
+  type PathContext,
+} from '../core/paths.js';
+import { priceFor } from '../core/pricing.js';
+import { staleRefsNote } from '../core/stale-refs.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файл конфига — только владелец (rw-------): внутри литеральный ключ. */
@@ -48,134 +61,140 @@ const OWNER_ONLY_MODE = 0o600;
 /** Актуальные id моделей каталога — для сброса устаревшего дефолта. */
 const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
-/** Каталог Pi: env PI_HOME (trim, непустой) либо ~/.pi. */
-function piHome(): string {
-  const fromEnv = process.env.PI_HOME;
-  if (typeof fromEnv === 'string' && fromEnv.trim() !== '') {
-    return fromEnv.trim();
+/**
+ * Каталог агента Pi — там лежат models.json и settings.json.
+ *
+ * Сверено 21.09.2026 по исходнику Pi (github.com/earendil-works/pi,
+ * packages/coding-agent/src/config.ts — getAgentDir, ENV_AGENT_DIR; npm-пакет
+ * теперь `@earendil-works/pi-coding-agent`):
+ *   1. PI_CODING_AGENT_DIR — САМ каталог агента (замена ~/.pi/agent целиком,
+ *      «agent» к нему не дописывается); ведущая тильда раскрывается;
+ *   2. иначе ~/.pi/agent.
+ *
+ * До 0.4.5 адаптер читал переменную PI_HOME, которой у Pi никогда не было:
+ * человек с настроенным PI_CODING_AGENT_DIR получал конфиг в каталоге, куда Pi
+ * не смотрит, — и «успешную» установку.
+ *
+ * Окружение приходит параметром, чтобы чужую платформу можно было проверить тестом.
+ */
+export function piAgentDir(ctx: PathContext = currentPathContext()): string {
+  const fromEnv = envValue(ctx, 'PI_CODING_AGENT_DIR');
+  if (fromEnv) {
+    return expandTilde(fromEnv, ctx);
   }
-  return join(homedir(), '.pi');
+  return pathApi(ctx).join(ctx.home, '.pi', 'agent');
+}
+
+/** Путь к файлу внутри каталога агента; окружение читается В МОМЕНТ ВЫЗОВА. */
+function agentFile(name: string): string {
+  const ctx = currentPathContext();
+  return pathApi(ctx).join(piAgentDir(ctx), name);
 }
 
 /** Основной конфиг адаптера — каталог провайдеров. */
 function resolvePath(_scope: Scope): string {
-  return join(piHome(), 'agent', 'models.json');
-}
-
-/** Файл общих настроек Pi — там живёт выбор дефолтной модели. */
-function settingsPath(): string {
-  return join(piHome(), 'agent', 'settings.json');
-}
-
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
-}
-
-/** Парсит JSON-файл в объект; null → «файла нет», undefined → «битый». */
-function readJsonObject(path: string): JsonObject | null | undefined {
-  const raw = readRaw(path);
-  if (raw == null) return null;
-  try {
-    return asObject(JSON.parse(raw)) ?? {};
-  } catch {
-    return undefined;
-  }
+  return agentFile('models.json');
 }
 
 /**
- * Каталог провайдера: наш блок строится FRESH (модели заменяются целиком),
- * чужие провайдеры и чужие поля внутри нашего — сохраняются deep-merge'ем.
+ * Правки models.json: наш блок провайдера. Каталог моделей — целиком актуальным
+ * набором, цена — живая на момент установки (input.pricing), иначе
+ * константа-фолбэк.
  */
-function buildModelsConfig(existing: JsonObject, apiKey: string): JsonObject {
-  const models = OPENCLAW_MODELS.map((spec) => piModelEntry(spec));
-
-  const merged = deepMergeJson(existing, {
-    providers: {
-      [PI_PROVIDER_ID]: {
-        baseUrl: BASE_URL_OPENAI,
-        api: PI_PROVIDER_API,
-        apiKey,
-        models,
-      },
-    },
-  });
-
-  // deepMergeJson заменяет массив целиком, но подстрахуемся явно: наш каталог —
-  // единственный источник правды по СВОИМ моделям.
-  const ourProvider = asObject(asObject(merged.providers)?.[PI_PROVIDER_ID]);
-  if (ourProvider) ourProvider.models = models;
-
-  return merged;
+function buildModelsEdits(input: ApplyInput): JsonEdit[] {
+  const provider = ['providers', PI_PROVIDER_ID];
+  const models = OPENCLAW_MODELS.map((spec) => piModelEntry(spec, priceFor(input.pricing, spec.id)));
+  return [
+    { path: [...provider, 'baseUrl'], value: BASE_URL_OPENAI },
+    { path: [...provider, 'api'], value: PI_PROVIDER_API },
+    { path: [...provider, 'apiKey'], value: input.apiKey },
+    { path: [...provider, 'models'], value: models },
+  ];
 }
 
 /**
- * Ставит дефолтную модель в settings.json: при явном `--model` — всегда, иначе
- * только когда дефолта нет ИЛИ он указывает на нашу модель, которой больше нет
- * в каталоге.
+ * Решение по дефолтной модели в settings.json: при явном `--model` — пишем
+ * всегда, иначе только когда дефолта нет ИЛИ он указывает на нашу модель,
+ * которой больше нет в каталоге.
  *
  * ★ Раньше рабочий выбор пользователя (наш провайдер + актуальная модель)
  * молча перезаписывался на дефолт при каждой повторной установке, хотя гайд
- * обещал обратное. Возвращает сообщения для пользователя.
+ * обещал обратное.
  */
-async function applyDefaultModel(model: string, modelExplicit: boolean): Promise<string[]> {
-  const path = settingsPath();
-  const existing = readJsonObject(path);
-
-  if (existing === undefined) {
-    // Битый JSON: НЕ трогаем (провайдер работает и без дефолта).
-    return [
-      `Note: ${path} is not valid JSON — left untouched.`,
-      `      Pick the model in Pi with: /model`,
-    ];
-  }
-
-  const base = existing ?? {};
-  const currentProvider = base.defaultProvider;
-  const currentModel = base.defaultModel;
+function planDefaultModel(
+  settings: JsonObject,
+  input: ApplyInput,
+  settingsFile: string,
+): { edits: JsonEdit[]; messages: string[]; staleRefs: number } {
+  const currentProvider = settings.defaultProvider;
+  const currentModel = settings.defaultModel;
   const isOurs = currentProvider === PI_PROVIDER_ID;
   const isStale = isOurs && typeof currentModel === 'string' && !CANONICAL_IDS.includes(currentModel);
-  const unset = typeof currentProvider !== 'string' || String(currentProvider).trim() === '';
+  const unset = typeof currentProvider !== 'string' || currentProvider.trim() === '';
 
-  if (!modelExplicit && !unset && !isStale && !isOurs) {
-    // Пользователь выбрал ЧУЖОГО провайдера — не переключаем молча.
-    return [
-      `Kept your existing default model (${String(currentProvider)}/${String(currentModel)}).`,
-      `      Switch inside Pi with: /model`,
-    ];
+  if (!input.modelExplicit && !unset && !isStale) {
+    if (isOurs && typeof currentModel === 'string') {
+      // Наш провайдер и актуальная модель — это осознанный выбор пользователя.
+      return {
+        edits: [],
+        staleRefs: 0,
+        messages: [
+          `Kept your current default model (${currentModel}).`,
+          `      Switch it with: --model deepseek|glm|minimax, or inside Pi: /model`,
+        ],
+      };
+    }
+    if (!isOurs) {
+      // Пользователь выбрал ЧУЖОГО провайдера — не переключаем молча.
+      return {
+        edits: [],
+        staleRefs: 0,
+        messages: [
+          `Kept your existing default model (${String(currentProvider)}/${String(currentModel)}).`,
+          `      Switch inside Pi with: /model`,
+        ],
+      };
+    }
   }
 
-  if (!modelExplicit && isOurs && !isStale && typeof currentModel === 'string') {
-    // Наш провайдер и актуальная модель — это осознанный выбор пользователя.
-    return [
-      `Kept your current default model (${currentModel}).`,
-      `      Switch it with: --model deepseek|glm|minimax, or inside Pi: /model`,
-    ];
-  }
-
-  backup(path);
-  const next = { ...base, defaultProvider: PI_PROVIDER_ID, defaultModel: model };
-  await atomicWrite(path, JSON.stringify(next, null, 2) + '\n');
-  return [`Default model set in ${path}`];
+  return {
+    edits: [
+      { path: ['defaultProvider'], value: PI_PROVIDER_ID },
+      { path: ['defaultModel'], value: input.model },
+    ],
+    staleRefs: isStale ? 1 : 0,
+    messages: [`Default model set in ${settingsFile}`],
+  };
 }
 
 async function apply(input: ApplyInput): Promise<ApplyResult> {
   const configPath = resolvePath(input.scope);
+  const settingsFile = agentFile('settings.json');
 
-  // Бэкапим ВСЕГДА при наличии файла — даже если JSON битый.
-  const existing = readJsonObject(configPath);
-  const backupPath = backup(configPath);
+  // ★ Порядок: прочитать ОБА файла → посчитать ОБА итоговых текста → и только
+  //   потом бэкапы и записи. Отказать может чтение (файл не разбирается) и
+  //   расчёт правок (`"providers": [...]` вместо объекта) — в обоих случаях диск
+  //   не тронут вовсе: ни записи, ни лишнего .bak.
+  const modelsDoc = readJsonConfig(readRaw(configPath), configPath);
+  const settingsDoc = readJsonConfig(readRaw(settingsFile), settingsFile);
+  const plan = planDefaultModel(settingsDoc.value, input, settingsFile);
 
-  // Битый models.json → стартуем со свежего объекта (бэкап уже сделан).
-  const base = existing === undefined || existing === null ? {} : existing;
-  const config = buildModelsConfig(base, input.apiKey);
+  const modelsText = applyJsonEdits(modelsDoc.text, buildModelsEdits(input), configPath);
+  // settings.json трогаем, только когда есть что менять.
+  const settingsText =
+    plan.edits.length > 0 ? applyJsonEdits(settingsDoc.text, plan.edits, settingsFile) : null;
 
   // 0o600: внутри литеральный ключ jg-...
-  await atomicWrite(configPath, JSON.stringify(config, null, 2) + '\n', OWNER_ONLY_MODE);
+  const backupPath = backup(configPath);
+  await atomicWrite(configPath, modelsText, OWNER_ONLY_MODE);
 
-  const defaultMessages = await applyDefaultModel(input.model, input.modelExplicit === true);
+  // В settings.json секретов нет, поэтому права не форсим.
+  if (settingsText !== null) {
+    backup(settingsFile);
+    await atomicWrite(settingsFile, settingsText);
+  }
+
+  const staleNote = staleRefsNote(plan.staleRefs);
 
   return {
     configPath,
@@ -185,7 +204,8 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       `Configured ${configPath}`,
       `Base URL: ${BASE_URL_OPENAI}`,
       `Model: ${input.model}`,
-      ...defaultMessages,
+      ...plan.messages,
+      ...(staleNote ? [staleNote] : []),
       '',
       // Ключ записан ЛИТЕРАЛЬНО (0o600). Pi умеет и $VAR-ссылки, но они требуют
       // экспортированной переменной, которую установщик не персистит.
@@ -204,6 +224,8 @@ export const piAdapter: Adapter = {
   // Кодовый агент: решение оператора 21.09.2026 — там, где установщик ПИШЕТ
   // модель в конфиг, по умолчанию идёт DeepSeek V4 Flash (380K/32768).
   defaultModel: CODING_AGENT_DEFAULT_MODEL,
+  // В каталоге моделей есть `cost` — просим у оркестратора живые цены.
+  wantsPricing: true,
   resolvePath,
   apply,
 };

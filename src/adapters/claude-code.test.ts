@@ -225,3 +225,23 @@ describe('claudeCodeAdapter.apply — модель и окно контекст�
     expect(readEnv().ANTHROPIC_BASE_URL).toBe('https://gate.joingonka.ai');
   });
 });
+
+describe('claudeCodeAdapter.apply — неожиданная форма узла (0.4.5)', () => {
+  // `env` обязан быть объектом: правка пишет ключи внутрь него. Примитив на его
+  // месте раньше давал сырое исключение jsonc-parser уже ПОСЛЕ бэкапа: лишний
+  // .bak при несостоявшейся установке и ни слова о том, что файл не тронут.
+  it('refuses when `env` is not an object: no write, no backup, a clear message', async () => {
+    const dir = join(tmpDir, '.claude');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'settings.json');
+    const original = '{ "env": 5, "theme": "dark" }';
+    writeFileSync(file, original);
+
+    await expect(claudeCodeAdapter.apply(input('user'))).rejects.toThrow(
+      /settings\.json.*"env" is a number.*Nothing was written/s,
+    );
+
+    expect(readFileSync(file, 'utf8')).toBe(original);
+    expect(readdirSync(dir)).toEqual(['settings.json']);
+  });
+});

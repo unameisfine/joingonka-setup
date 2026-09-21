@@ -62,4 +62,27 @@ describe('jetbrainsAdapter', () => {
     await jetbrainsAdapter.apply(input);
     expect(readdirSync(tmpDir).length).toBe(0);
   });
+
+  // https://www.jetbrains.com/help/ai-assistant/use-custom-models.html (ред. 28.07.2026)
+  it('tells to enable Tool calling — without it the models get no MCP tools', async () => {
+    const joined = (await jetbrainsAdapter.apply(input)).messages.join('\n');
+    expect(joined).toMatch(/Tool calling:\s+enabled/);
+    expect(joined).toContain('Test Connection');
+    expect(joined).toContain('Apply');
+  });
+
+  it('gives the context window to enter (the IDE default is 64000)', async () => {
+    const joined = (await jetbrainsAdapter.apply(input)).messages.join('\n');
+    expect(joined).toMatch(/Context window:\s+200000/);
+    expect(joined).toContain('8192');
+  });
+
+  it('names exactly what stays on JetBrains models', async () => {
+    const joined = (await jetbrainsAdapter.apply(input)).messages.join('\n');
+    // По доке — code completion и next edit suggestions (им нужны FIM/edit-prediction
+    // модели); Junie — по activate-agents.html: API key (BYOK) «Not supported».
+    expect(joined).toMatch(/code completion/i);
+    expect(joined).toMatch(/next edit suggestions/i);
+    expect(joined).toContain('Junie');
+  });
 });

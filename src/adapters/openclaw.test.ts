@@ -475,3 +475,193 @@ describe('openclawAdapter.apply — JSONC и явная модель (0.4.5)', (
     expect(readConfig().agents.defaults.model.fallbacks).toEqual(['openai/gpt-5.4']);
   });
 });
+
+describe('openclawAdapter.apply — ушедшие модели ВНЕ каталога провайдера (0.4.5)', () => {
+  // Каталог и алиасы чистились и раньше, а ссылки на ушедшую модель в запасных
+  // и у отдельных агентов оставались: агент, закреплённый за Kimi, после
+  // «успешной» переустановки продолжал ходить в модель, которой в сети нет.
+  // Формы сверены с докой OpenClaw 21.09.2026 (docs/gateway/config-agents/
+  // models.md и entries-and-multi-agent.md): model — строка "provider/model"
+  // либо объект { primary, fallbacks }; агенты — `agents.entries.<id>` (сейчас)
+  // и `agents.list[]` (прежняя форма, её переносит `openclaw doctor --fix`).
+  const KIMI = 'gonka/moonshotai/Kimi-K2.6';
+
+  const seed = (config: unknown) => {
+    const dir = join(tmpDir, '.openclaw');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'openclaw.json'), JSON.stringify(config, null, 2));
+  };
+
+  it('drops our retired models from the user fallbacks and keeps everything else', async () => {
+    seed({
+      agents: {
+        defaults: {
+          model: {
+            primary: 'openai/gpt-5.4',
+            fallbacks: [KIMI, 'openai/gpt-5.4-mini', `gonka/${DEFAULT_MODEL}`],
+          },
+        },
+      },
+    });
+
+    await openclawAdapter.apply(input());
+
+    const model = readConfig().agents.defaults.model;
+    expect(model.primary).toBe('openai/gpt-5.4'); // чужой primary цел
+    expect(model.fallbacks).toEqual(['openai/gpt-5.4-mini', `gonka/${DEFAULT_MODEL}`]);
+  });
+
+  it('writes our fallbacks when the user list held nothing but retired models', async () => {
+    seed({ agents: { defaults: { model: { primary: KIMI, fallbacks: [KIMI] } } } });
+
+    await openclawAdapter.apply(input());
+
+    const model = readConfig().agents.defaults.model;
+    expect(model.primary).toBe(OPENCLAW_DEFAULT_PRIMARY);
+    expect(model.fallbacks).toEqual([`gonka/${GLM_MODEL}`, `gonka/${DEFAULT_MODEL}`]);
+  });
+
+  it('repoints agents pinned to a retired model at the actual primary (agents.list)', async () => {
+    seed({
+      agents: {
+        defaults: { model: { primary: 'openai/gpt-5.4' } },
+        list: [
+          { id: 'coder', model: KIMI, workspace: '~/w' },
+          { id: 'writer', model: 'anthropic/claude-opus-5' },
+          { id: 'ops', model: { primary: KIMI, fallbacks: [KIMI, 'openai/gpt-5.4-mini'] } },
+          { id: 'plain' },
+        ],
+      },
+    });
+
+    await openclawAdapter.apply(input());
+
+    const list = readConfig().agents.list;
+    // Фактический primary здесь чужой — агент получает его, а не наш дефолт.
+    expect(list[0]).toEqual({ id: 'coder', model: 'openai/gpt-5.4', workspace: '~/w' });
+    expect(list[1].model).toBe('anthropic/claude-opus-5'); // чужая ссылка цела
+    expect(list[2].model).toEqual({ primary: 'openai/gpt-5.4', fallbacks: ['openai/gpt-5.4-mini'] });
+    expect(list[3]).toEqual({ id: 'plain' });
+  });
+
+  it('does the same for keyed agents.entries', async () => {
+    seed({
+      agents: {
+        entries: {
+          main: { name: 'Main', model: KIMI },
+          side: { model: { primary: `gonka/${GLM_MODEL}`, fallbacks: [KIMI] } },
+        },
+      },
+    });
+
+    await openclawAdapter.apply(input());
+
+    const entries = readConfig().agents.entries;
+    expect(entries.main).toEqual({ name: 'Main', model: OPENCLAW_DEFAULT_PRIMARY });
+    expect(entries.side.model).toEqual({ primary: `gonka/${GLM_MODEL}`, fallbacks: [] });
+  });
+
+  it('leaves no trace of the retired model and tells the user what it did', async () => {
+    seed({
+      models: { providers: { gonka: { models: [{ id: 'moonshotai/Kimi-K2.6' }] } } },
+      agents: {
+        defaults: {
+          model: { primary: KIMI, fallbacks: [KIMI, 'openai/gpt-5.4-mini'] },
+          models: { [KIMI]: { alias: 'kimi-k2.6' } },
+        },
+        list: [{ id: 'coder', model: KIMI }],
+      },
+    });
+
+    const result = await openclawAdapter.apply(input());
+
+    expect(readFileSync(defaultConfigPath(), 'utf-8')).not.toContain('Kimi');
+    expect(result.messages.join('\n')).toMatch(/no longer served/i);
+  });
+
+  it('says nothing about retired models when there were none', async () => {
+    const result = await openclawAdapter.apply(input());
+    expect(result.messages.join('\n')).not.toMatch(/no longer served/i);
+  });
+});
+
+describe('openclawAdapter.apply — строковая форма agents.defaults.model (0.4.5)', () => {
+  // Дока OpenClaw: `model` — строка ИЛИ объект. До 0.4.5 строка роняла установку
+  // («Can not add index to parent of type string») уже ПОСЛЕ создания бэкапа.
+  const seedModel = (model: unknown) => {
+    const dir = join(tmpDir, '.openclaw');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'openclaw.json'), JSON.stringify({ agents: { defaults: { model } } }));
+  };
+
+  it('keeps a foreign model given as a plain string', async () => {
+    seedModel('openai/gpt-5.4');
+
+    const result = await openclawAdapter.apply(input());
+
+    // Строка = «только primary, без запасных»: это выбор пользователя, не трогаем.
+    expect(readConfig().agents.defaults.model).toBe('openai/gpt-5.4');
+    expect(result.messages.join('\n')).toContain('openai/gpt-5.4');
+  });
+
+  it('replaces our retired model given as a plain string', async () => {
+    seedModel('gonka/moonshotai/Kimi-K2.6');
+
+    await openclawAdapter.apply(input());
+
+    expect(readConfig().agents.defaults.model).toEqual({
+      primary: OPENCLAW_DEFAULT_PRIMARY,
+      fallbacks: [`gonka/${GLM_MODEL}`, `gonka/${DEFAULT_MODEL}`],
+    });
+  });
+
+  it('writes an explicit --model over a plain string', async () => {
+    seedModel('openai/gpt-5.4');
+
+    await openclawAdapter.apply({ ...input(), model: GLM_MODEL, modelExplicit: true });
+
+    const model = readConfig().agents.defaults.model;
+    expect(model.primary).toBe(`gonka/${GLM_MODEL}`);
+    expect(model.fallbacks).toEqual([`gonka/${DEFAULT_MODEL}`]);
+  });
+});
+
+describe('openclawAdapter.apply — живая цена (0.4.5)', () => {
+  it('writes the live price handed over by the orchestrator', async () => {
+    await openclawAdapter.apply({ ...input(), pricing: { input: 0.005808, output: 0.017424 } });
+
+    const models = readConfig().models.providers.gonka.models as Array<Record<string, any>>;
+    for (const model of models) {
+      expect(model.cost).toEqual({
+        input: 0.005808,
+        output: 0.017424,
+        cacheRead: 0.005808,
+        cacheWrite: 0.005808,
+      });
+    }
+  });
+
+  it('asks the orchestrator for prices', () => {
+    expect(openclawAdapter.wantsPricing).toBe(true);
+  });
+});
+
+describe('openclawAdapter.apply — неожиданная форма узла (0.4.5)', () => {
+  // Правки считаются ДО бэкапа: отказ не должен оставлять после себя .bak.
+  it.each([
+    ['models', '{ "models": "none", "channels": ["telegram"] }', /"models" is a string/],
+    ['agents', '{ "agents": 5 }', /"agents" is a number/],
+    ['models.providers', '{ "models": { "providers": [] } }', /"models → providers" is an array/],
+  ])('refuses when `%s` has an unexpected shape: no write, no backup', async (_key, original, reason) => {
+    const dir = join(tmpDir, '.openclaw');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'openclaw.json');
+    writeFileSync(file, original);
+
+    await expect(openclawAdapter.apply(input())).rejects.toThrow(reason);
+    await expect(openclawAdapter.apply(input())).rejects.toThrow(/openclaw\.json.*Nothing was written/s);
+
+    expect(readFileSync(file, 'utf8')).toBe(original);
+    expect(readdirSync(dir)).toEqual(['openclaw.json']);
+  });
+});

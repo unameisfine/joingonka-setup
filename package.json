@@ -1,6 +1,6 @@
 {
   "name": "@joingonka/setup",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "One-command installer to point 15 agentic AI coding tools (Claude Code, OpenClaw, Cursor, Cline, opencode, Aider, Kilo, Roo, Continue, Hermes, Pi, Zed, ZCode, JetBrains, Copilot BYOK) at JoinGonka Gateway — a cheap, OpenAI- and Anthropic-compatible API for decentralized Gonka AI inference",
   "type": "module",
   "bin": {
@@ -16,7 +16,7 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "node scripts/check-clean-tree.mjs && npm run build && npm test"
   },
   "engines": {
     "node": ">=18.0.0"

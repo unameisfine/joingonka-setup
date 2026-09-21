@@ -28,11 +28,25 @@
  * нетронутыми, а файл, который нельзя разобрать, приводит к отказу без записи
  * (до 0.4.5 такой файл заменялся свежим — с потерей ключей других провайдеров).
  *
- * Пути переопределяются env: OPENCODE_CONFIG → opencode.json,
- * OPENCODE_AUTH_JSON → auth.json (тесты и нестандартные раскладки XDG).
+ * ★ Где opencode ищет файлы (сверено 21.09.2026 по исходнику
+ * github.com/anomalyco/opencode, ветка dev — packages/core/src/global.ts,
+ * packages/opencode/src/auth/index.ts, packages/core/src/flag/flag.ts — и доке
+ * https://opencode.ai/docs/config). Каталоги берутся из npm-пакета
+ * `xdg-basedir`, особого случая для Windows и macOS нет:
+ *   конфиг: <XDG_CONFIG_HOME | ~/.config>/opencode/opencode.json
+ *   ключи:  <XDG_DATA_HOME | ~/.local/share>/opencode/auth.json
+ * До 0.4.5 оба пути были прибиты к домашнему каталогу, и при заданных XDG_*
+ * установщик писал туда, куда opencode не смотрит.
+ *
+ * Переменные-переопределения:
+ *   OPENCODE_CONFIG    — НАСТОЯЩАЯ переменная opencode («Custom config»): путь к
+ *                        файлу, который opencode грузит поверх глобального.
+ *                        Задана у пользователя — пишем в неё.
+ *   OPENCODE_AUTH_JSON — НАША, opencode её не знает (у него есть только
+ *                        OPENCODE_AUTH_CONTENT — содержимое, а не путь). Нужна
+ *                        тестам и нестандартным раскладкам; в обычной установке
+ *                        не задаётся.
  */
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import {
   BASE_URL_OPENAI,
   OPENCLAW_MODELS,
@@ -44,6 +58,15 @@ import {
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
 import { isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
+import {
+  currentPathContext,
+  envValue,
+  pathApi,
+  xdgConfigHome,
+  xdgDataHome,
+  type PathContext,
+} from '../core/paths.js';
+import { opencodeStaleRefEdits, staleRefsNote } from '../core/stale-refs.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файлы конфига/ключей — только владелец (rw-------). */
@@ -52,52 +75,25 @@ const OWNER_ONLY_MODE = 0o600;
 /** Актуальные id моделей каталога — для прунинга устаревших и сброса дефолта. */
 const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
+/**
+ * Пути к opencode.json и auth.json (см. шапку файла). Окружение приходит
+ * параметром — так Windows- и XDG-ветки проверяются тестами на любой машине.
+ */
+export function opencodePaths(ctx: PathContext = currentPathContext()): {
+  config: string;
+  auth: string;
+} {
+  const { join } = pathApi(ctx);
+  return {
+    config:
+      envValue(ctx, 'OPENCODE_CONFIG') ?? join(xdgConfigHome(ctx), 'opencode', 'opencode.json'),
+    auth: envValue(ctx, 'OPENCODE_AUTH_JSON') ?? join(xdgDataHome(ctx), 'opencode', 'auth.json'),
+  };
 }
 
-/**
- * Путь к opencode.json:
- *   1. env OPENCODE_CONFIG (trim, непустой) — приоритет;
- *   2. иначе ~/.config/opencode/opencode.json.
- * homedir()/env читаются В МОМЕНТ ВЫЗОВА (тесты подменяют HOME/env).
- */
+/** Путь к opencode.json; окружение читается В МОМЕНТ ВЫЗОВА (тесты подменяют env). */
 function resolvePath(_scope: Scope): string {
-  const fromEnv = process.env.OPENCODE_CONFIG;
-  if (typeof fromEnv === 'string' && fromEnv.trim() !== '') {
-    return fromEnv.trim();
-  }
-  return join(homedir(), '.config', 'opencode', 'opencode.json');
-}
-
-/**
- * Путь к нативному хранилищу ключей opencode (auth.json):
- *   1. env OPENCODE_AUTH_JSON (trim, непустой) — приоритет;
- *   2. иначе ~/.local/share/opencode/auth.json (XDG data dir).
- */
-function resolveAuthPath(): string {
-  const fromEnv = process.env.OPENCODE_AUTH_JSON;
-  if (typeof fromEnv === 'string' && fromEnv.trim() !== '') {
-    return fromEnv.trim();
-  }
-  return join(homedir(), '.local', 'share', 'opencode', 'auth.json');
-}
-
-/** Безопасный парс JSON-объекта; не-объект/битый → {} (бэкап делается отдельно). */
-function parseObject(raw: string | null): JsonObject {
-  if (raw == null) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as JsonObject;
-    }
-  } catch {
-    /* битый JSON → свежий объект */
-  }
-  return {};
+  return opencodePaths().config;
 }
 
 /** Каталог наших моделей в форме opencode: { "<id>": { name, limit } }. */
@@ -116,7 +112,10 @@ function buildModels(): JsonObject {
  * `model` пишем, если пользователь задал `--model` явно; иначе — только когда
  * он пуст или указывает на нашу убранную модель. Чужой выбор не трогаем.
  */
-function buildEdits(existing: JsonObject, input: ApplyInput): { edits: JsonEdit[]; model: string } {
+function buildEdits(
+  existing: JsonObject,
+  input: ApplyInput,
+): { edits: JsonEdit[]; model: string; staleRefs: number } {
   const provider = ['provider', OPENCODE_PROVIDER_ID];
   const edits: JsonEdit[] = [
     { path: ['$schema'], value: 'https://opencode.ai/config.json' },
@@ -144,7 +143,24 @@ function buildEdits(existing: JsonObject, input: ApplyInput): { edits: JsonEdit[
     model = current as string;
   }
 
-  return { edits, model };
+  // Наши убранные модели вне каталога: small_model и модели агентов/команд.
+  // Заменяем на модель нашего провайдера, действующую в этой установке: явный
+  // --model, иначе дефолт провайдера. Top-level `model` пользователя сюда не
+  // подставляем — он может быть чужим, а пересаживать НАШЕГО агента на чужого
+  // провайдера установщик не вправе.
+  const replacement = input.modelExplicit
+    ? `${OPENCODE_PROVIDER_ID}/${input.model}`
+    : OPENCODE_DEFAULT_MODEL;
+  const staleEdits = opencodeStaleRefEdits(
+    existing,
+    OPENCODE_PROVIDER_ID,
+    CANONICAL_IDS,
+    replacement,
+  );
+  edits.push(...staleEdits);
+  const staleDefault = isStaleProviderModelRef(current, OPENCODE_PROVIDER_ID, CANONICAL_IDS);
+
+  return { edits, model, staleRefs: staleEdits.length + (staleDefault ? 1 : 0) };
 }
 
 /**
@@ -159,32 +175,37 @@ function buildAuthEdits(apiKey: string): JsonEdit[] {
 }
 
 async function apply(input: ApplyInput): Promise<ApplyResult> {
-  // 1) opencode.json — провайдер (без apiKey). Читаем ДО бэкапа: неразбираемый
-  //    конфиг означает отказ, и тогда диск не трогаем вовсе.
+  // ★ Порядок: прочитать ОБА файла → посчитать ОБА итоговых текста → и только
+  //   потом бэкапы и записи. Отказать может чтение (файл не разбирается) и
+  //   расчёт правок (примитив на пути: `"provider": "x"`, `"joingonka": "ключ"`
+  //   в auth.json старого формата). Отказ на втором файле не должен застать
+  //   первый уже переписанным, а диск — с лишним .bak.
+
+  // 1) opencode.json — провайдер (без apiKey).
   const configPath = resolvePath(input.scope);
   const configDoc = readJsonConfig(readRaw(configPath), configPath);
 
-  // 2) auth.json — ключ в нативном хранилище opencode. Тоже читаем заранее:
-  //    в нём лежат ключи ДРУГИХ провайдеров пользователя.
-  const authPath = resolveAuthPath();
+  // 2) auth.json — ключ в нативном хранилище opencode; в нём лежат ключи ДРУГИХ
+  //    провайдеров пользователя.
+  const authPath = opencodePaths().auth;
   const authDoc = readJsonConfig(readRaw(authPath), authPath);
 
+  const { edits, model, staleRefs } = buildEdits(configDoc.value, input);
+  const configText = applyJsonEdits(configDoc.text, edits, configPath);
+  const authText = applyJsonEdits(authDoc.text, buildAuthEdits(input.apiKey), authPath);
+
   const configBackup = backup(configPath);
-  const { edits, model } = buildEdits(configDoc.value, input);
-  await atomicWrite(configPath, applyJsonEdits(configDoc.text, edits), OWNER_ONLY_MODE);
+  await atomicWrite(configPath, configText, OWNER_ONLY_MODE);
 
   const authBackup = backup(authPath);
-  await atomicWrite(
-    authPath,
-    applyJsonEdits(authDoc.text, buildAuthEdits(input.apiKey)),
-    OWNER_ONLY_MODE,
-  );
+  await atomicWrite(authPath, authText, OWNER_ONLY_MODE);
 
   const messages = [
     `Configured provider in ${configPath}`,
     `Stored API key in ${authPath} (opencode native store — same as \`opencode auth login\`)`,
     `Base URL: ${BASE_URL_OPENAI}`,
     `Default model: ${model}`,
+    ...[staleRefsNote(staleRefs)].filter((line): line is string => line !== null),
     '',
     'No environment variables changed — your other OpenAI-compatible tools are left untouched.',
     'Restart opencode to pick up the new provider.',

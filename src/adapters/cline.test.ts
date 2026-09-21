@@ -16,7 +16,7 @@ import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clineAdapter } from './cline.js';
-import { DEFAULT_MODEL } from '../constants.js';
+import { DEFAULT_MODEL, DEEPSEEK_MODEL } from '../constants.js';
 
 let tmpDir: string;
 let originalHome: string | undefined;
@@ -82,3 +82,27 @@ describe('clineAdapter.apply', () => {
     expect(entries.length).toBe(0);
   });
 });
+
+describe('clineAdapter.apply — поля формы по исходнику Cline (0.4.5)', () => {
+  // Подписи — apps/vscode/webview-ui/src/components/settings/providers/
+  // OpenAICompatible.tsx (github.com/cline/cline, 21.09.2026) и дока
+  // https://docs.cline.bot/provider-config/openai-compatible.
+  const run = async (model = DEFAULT_MODEL) =>
+    (await clineAdapter.apply({ apiKey: 'jg-test123', model, scope: 'user' })).messages.join('\n');
+
+  it('gives the Model Configuration values instead of a Verify button that does not exist', async () => {
+    const text = await run();
+    expect(text).not.toMatch(/verify/i);
+    expect(text).toContain('Model Configuration');
+    expect(text).toMatch(/Context Window Size:\s+200000/);
+    expect(text).toMatch(/Max Output Tokens:\s+8192/);
+    expect(text).toMatch(/Supports Images:\s+off/);
+  });
+
+  it('prints per-model limits (DeepSeek: 380000 / 32768)', async () => {
+    const text = await run(DEEPSEEK_MODEL);
+    expect(text).toMatch(/Context Window Size:\s+380000/);
+    expect(text).toMatch(/Max Output Tokens:\s+32768/);
+  });
+});
+
