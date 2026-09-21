@@ -26,13 +26,14 @@
  */
 import {
   BASE_URL_OPENAI,
-  OPENCLAW_MODELS,
   ZED_PROVIDER_ID,
   ZED_API_KEY_ENV,
   zedModelEntry,
 } from '../constants.js';
+import { catalogFor, catalogIds } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { asObject } from '../core/json-shape.js';
 import type { JsonObject } from '../core/merge.js';
 import {
   currentPathContext,
@@ -43,9 +44,6 @@ import {
 } from '../core/paths.js';
 import { staleRefsNote } from '../core/stale-refs.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
-
-/** Актуальные id моделей каталога — чтобы узнать ссылку на убранную модель. */
-const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
 /**
  * Путь к settings.json. Сверено 21.09.2026 с докой Zed («Settings Files»,
@@ -131,20 +129,16 @@ const MODEL_SELECTION_KEYS = [
 ] as const;
 const MODEL_LIST_KEYS = ['favorite_models', 'inline_alternatives'] as const;
 
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
-}
-
-/** true — запись выбирает НАШ провайдер и модель, которой в каталоге уже нет. */
-function isStaleSelection(value: unknown): boolean {
+/**
+ * true — запись выбирает НАШ провайдер и модель, которой нет в каталоге ЭТОЙ
+ * установки (`liveIds` — core/catalog.ts: сеть плюс явно запрошенная вне каталога).
+ */
+function isStaleSelection(value: unknown, liveIds: readonly string[]): boolean {
   const selection = asObject(value);
   return (
     selection?.provider === ZED_PROVIDER_ID &&
     typeof selection.model === 'string' &&
-    !CANONICAL_IDS.includes(selection.model)
+    !liveIds.includes(selection.model)
   );
 }
 
@@ -155,17 +149,19 @@ function isStaleSelection(value: unknown): boolean {
  * трогаем, даже если имя их модели нам незнакомо.
  *
  * @param skipDefault default_model уже переписывается явным `--model`.
+ * @param liveIds     id моделей каталога этой установки (core/catalog.ts).
  */
 function staleAgentEdits(
   agent: JsonObject,
   model: string,
   skipDefault: boolean,
+  liveIds: readonly string[],
 ): { edits: JsonEdit[]; staleRefs: number } {
   const edits: JsonEdit[] = [];
   let staleRefs = 0;
 
   for (const key of MODEL_SELECTION_KEYS) {
-    if (!isStaleSelection(agent[key])) continue;
+    if (!isStaleSelection(agent[key], liveIds)) continue;
     staleRefs += 1;
     if (key === 'default_model' && skipDefault) continue;
     edits.push({ path: ['agent', key, 'model'], value: model });
@@ -174,7 +170,7 @@ function staleAgentEdits(
   for (const key of MODEL_LIST_KEYS) {
     const list = agent[key];
     if (!Array.isArray(list)) continue;
-    const live = list.filter((entry) => !isStaleSelection(entry));
+    const live = list.filter((entry) => !isStaleSelection(entry, liveIds));
     if (live.length === list.length) continue;
     // Массив — целиком: удаление элементов по индексу в jsonc-parser 3.3.1
     // портит однострочные массивы (см. core/json-config.ts).
@@ -196,8 +192,11 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
   const doc = readJsonConfig(readRaw(configPath), configPath);
 
   // Каталог моделей строим FRESH: устаревшие модели прошлых версий установщика
-  // (напр. Qwen) исчезают, потому что массив заменяется целиком.
-  const availableModels = OPENCLAW_MODELS.map((spec) => zedModelEntry(spec));
+  // (напр. Qwen) исчезают, потому что массив заменяется целиком. Явно запрошенная
+  // модель вне каталога тоже попадает в него (core/catalog.ts): default_model,
+  // которого нет в available_models, Zed в панели агента не покажет.
+  const catalog = catalogFor(input);
+  const availableModels = catalog.map((spec) => zedModelEntry(spec));
 
   // Точечные правки по путям — чужие настройки и КОММЕНТАРИИ файла целы.
   // Ключ (api_key) НЕ пишем: Zed его отсюда не читает и док это запрещает.
@@ -223,6 +222,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     asObject(doc.value.agent) ?? {},
     input.model,
     input.modelExplicit === true,
+    catalogIds(input),
   );
   edits.push(...stale.edits);
   const staleNote = staleRefsNote(stale.staleRefs);
@@ -240,7 +240,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     messages: [
       `Configured ${configPath}`,
       `Provider: ${ZED_PROVIDER_ID} → ${BASE_URL_OPENAI}`,
-      `Models: ${OPENCLAW_MODELS.map((m) => m.id).join(', ')}`,
+      `Models: ${catalog.map((m) => m.id).join(', ')}`,
       ...(staleNote ? [staleNote] : []),
       '',
       // Единственный адаптер, который НЕ кладёт ключ в конфиг: так требует Zed.

@@ -35,7 +35,7 @@ import {
 import { tmpdir, platform } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { minimaxCodeAdapter } from './minimax-code.js';
+import { minimaxCodeAdapter, minimaxCodeConfigPath } from './minimax-code.js';
 import {
   CODING_AGENT_DEFAULT_MODEL,
   DEEPSEEK_MODEL,
@@ -453,5 +453,36 @@ describe('minimaxCodeAdapter.apply — backups, idempotency, data dir', () => {
     expect(result.configPath).toBe(join(custom, 'config.yaml'));
     expect(readConfig(join(custom, 'config.yaml')).custom_provider.joingonka.kind).toBe('custom');
     expect(existsSync(dataDir())).toBe(false);
+  });
+});
+
+describe('minimaxCodeConfigPath — чужая платформа через PathContext (0.5.0)', () => {
+  // Сверено 21.09.2026 по packages/config/src/data-dir.ts и config.ts (main ae65651d):
+  // каталог данных — path.join(os.homedir(), '.minimax') на ВСЕХ платформах, особого
+  // случая для Windows нет; MINIMAX_DATA_DIR / MAVIS_DATA_DIR берутся как есть (trim).
+  const win = (env: NodeJS.ProcessEnv) => ({ platform: 'win32' as const, env, home: 'C:\\Users\\u' });
+
+  it('uses <home>\\.minimax\\config.yaml on Windows — no AppData special case', () => {
+    expect(minimaxCodeConfigPath(win({}))).toBe('C:\\Users\\u\\.minimax\\config.yaml');
+    expect(minimaxCodeConfigPath(win({ APPDATA: 'C:\\AD' }))).toBe('C:\\Users\\u\\.minimax\\config.yaml');
+  });
+
+  it('honours MINIMAX_DATA_DIR, then MAVIS_DATA_DIR, with Windows separators', () => {
+    expect(minimaxCodeConfigPath(win({ MINIMAX_DATA_DIR: ' D:\\mm ' }))).toBe('D:\\mm\\config.yaml');
+    expect(minimaxCodeConfigPath(win({ MAVIS_DATA_DIR: 'D:\\mavis' }))).toBe('D:\\mavis\\config.yaml');
+    expect(minimaxCodeConfigPath(win({ MINIMAX_DATA_DIR: 'D:\\mm', MAVIS_DATA_DIR: 'D:\\mavis' }))).toBe(
+      'D:\\mm\\config.yaml',
+    );
+    // Пустая переменная — как отсутствие.
+    expect(minimaxCodeConfigPath(win({ MINIMAX_DATA_DIR: '  ' }))).toBe('C:\\Users\\u\\.minimax\\config.yaml');
+  });
+
+  it('keeps the POSIX layout unchanged', () => {
+    expect(minimaxCodeConfigPath({ platform: 'linux', env: {}, home: '/home/u' })).toBe(
+      '/home/u/.minimax/config.yaml',
+    );
+    expect(minimaxCodeConfigPath({ platform: 'darwin', env: {}, home: '/Users/u' })).toBe(
+      '/Users/u/.minimax/config.yaml',
+    );
   });
 });

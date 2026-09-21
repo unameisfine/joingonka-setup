@@ -15,9 +15,10 @@
   ],
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "node scripts/check-clean-tree.mjs && npm run build && npm test"
+    "prepublishOnly": "node scripts/check-clean-tree.mjs && npm run typecheck && npm run build && npm test"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -45,14 +45,15 @@
 import {
   BASE_URL_OPENAI,
   CODING_AGENT_DEFAULT_MODEL,
-  OPENCLAW_MODELS,
   OPENCODE_NPM,
   KILO_PROVIDER_ID,
   KILO_DEFAULT_MODEL,
   kiloModelEntry,
 } from '../constants.js';
+import { catalogFor, catalogIds } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { asObject } from '../core/json-shape.js';
 import {
   inheritedModel,
   pickLayeredConfig,
@@ -71,9 +72,6 @@ import { opencodeStaleRefEdits, staleRefsNote } from '../core/stale-refs.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 const OWNER_ONLY_MODE = 0o600;
-
-/** Актуальные id моделей каталога — для прунинга устаревших и сброса дефолта. */
-const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
 /** Глобальные конфиги Kilo по УБЫВАНИЮ приоритета загрузки (config.ts, loadGlobal). */
 const GLOBAL_CONFIG_NAMES = [
@@ -113,28 +111,25 @@ function resolvePath(_scope: Scope): string {
   return kiloConfigPath();
 }
 
-function buildModels(): JsonObject {
+/**
+ * Каталог наших моделей: модели сети плюс явно запрошенная модель вне каталога
+ * (core/catalog.ts) — дефолт, которого нет в каталоге провайдера, Kilo не находит.
+ */
+function buildModels(input: ApplyInput): JsonObject {
   const models: JsonObject = {};
-  for (const spec of OPENCLAW_MODELS) {
+  for (const spec of catalogFor(input)) {
     models[spec.id] = kiloModelEntry(spec) as JsonObject;
   }
   return models;
 }
 
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
-}
-
-/** true — ссылка на НАШ провайдер, а модели в каталоге уже нет. */
-function isStale(ref: unknown): boolean {
-  return isStaleProviderModelRef(ref, KILO_PROVIDER_ID, CANONICAL_IDS);
+/** true — ссылка на НАШ провайдер, а модели в каталоге этой установки нет. */
+function isStale(ref: unknown, liveIds: readonly string[]): boolean {
+  return isStaleProviderModelRef(ref, KILO_PROVIDER_ID, liveIds);
 }
 
 /** Блок нашего провайдера; каталог моделей — целиком актуальным набором. */
-function providerEdits(apiKey: string): JsonEdit[] {
+function providerEdits(input: ApplyInput): JsonEdit[] {
   const provider = ['provider', KILO_PROVIDER_ID];
   return [
     { path: [...provider, 'npm'], value: OPENCODE_NPM },
@@ -142,8 +137,8 @@ function providerEdits(apiKey: string): JsonEdit[] {
     { path: [...provider, 'options', 'baseURL'], value: BASE_URL_OPENAI },
     // Литеральный ключ jg-... (НЕ {env:...}-ссылка): без env-формы Kilo берёт
     // значение как есть → работает БЕЗ внешней переменной. Файл 0o600.
-    { path: [...provider, 'options', 'apiKey'], value: apiKey },
-    { path: [...provider, 'models'], value: buildModels() },
+    { path: [...provider, 'options', 'apiKey'], value: input.apiKey },
+    { path: [...provider, 'models'], value: buildModels(input) },
   ];
 }
 
@@ -172,8 +167,9 @@ function buildEdits(
 ): { edits: JsonEdit[]; model: string; staleRefs: number } {
   const edits: JsonEdit[] = [
     { path: ['$schema'], value: 'https://app.kilo.ai/config.json' },
-    ...providerEdits(input.apiKey),
+    ...providerEdits(input),
   ];
+  const liveIds = catalogIds(input);
 
   const own = existing.model;
   const current = typeof own === 'string' && own.trim() !== '' ? own : inherited;
@@ -182,7 +178,7 @@ function buildEdits(
   if (input.modelExplicit) {
     model = `${KILO_PROVIDER_ID}/${input.model}`;
     edits.push({ path: ['model'], value: model });
-  } else if (current === undefined || isStale(current)) {
+  } else if (current === undefined || isStale(current, liveIds)) {
     model = KILO_DEFAULT_MODEL;
     edits.push({ path: ['model'], value: model });
   } else {
@@ -192,13 +188,13 @@ function buildEdits(
   const staleEdits = opencodeStaleRefEdits(
     existing,
     KILO_PROVIDER_ID,
-    CANONICAL_IDS,
+    liveIds,
     replacementFor(input),
   );
   edits.push(...staleEdits);
 
   // Устаревшую `model` из файла ниже считает legacyEdits — там она и чинится.
-  return { edits, model, staleRefs: staleEdits.length + (isStale(own) ? 1 : 0) };
+  return { edits, model, staleRefs: staleEdits.length + (isStale(own, liveIds) ? 1 : 0) };
 }
 
 /**
@@ -209,13 +205,14 @@ function buildEdits(
  */
 function legacyEdits(existing: JsonObject, input: ApplyInput): { edits: JsonEdit[]; staleRefs: number } {
   const replacement = replacementFor(input);
+  const liveIds = catalogIds(input);
   const stale: JsonEdit[] = [
-    ...(isStale(existing.model) ? [{ path: ['model'], value: replacement }] : []),
-    ...opencodeStaleRefEdits(existing, KILO_PROVIDER_ID, CANONICAL_IDS, replacement),
+    ...(isStale(existing.model, liveIds) ? [{ path: ['model'], value: replacement }] : []),
+    ...opencodeStaleRefEdits(existing, KILO_PROVIDER_ID, liveIds, replacement),
   ];
   const hasOurBlock = asObject(asObject(existing.provider)?.[KILO_PROVIDER_ID]) !== undefined;
   return {
-    edits: [...(hasOurBlock ? providerEdits(input.apiKey) : []), ...stale],
+    edits: [...(hasOurBlock ? providerEdits(input) : []), ...stale],
     staleRefs: stale.length,
   };
 }

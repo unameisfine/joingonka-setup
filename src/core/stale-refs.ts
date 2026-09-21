@@ -14,14 +14,8 @@
  * провайдеры и актуальные наши модели не меняются никогда.
  */
 import type { JsonEdit } from './json-config.js';
+import { asObject } from './json-shape.js';
 import { isStaleProviderModelRef, type JsonObject } from './merge.js';
-
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
-}
 
 /**
  * Строка для пользователя о вычищенных ссылках; null — чистить было нечего

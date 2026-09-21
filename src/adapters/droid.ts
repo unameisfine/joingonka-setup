@@ -54,6 +54,7 @@
  * комментарий за элементом, см. core/json-config.ts), поэтому редкий случай
  * «наших записей было больше, чем моделей в сети» решается заменой массива
  * целиком: значения чужих записей сохраняются, комментарии внутри массива — нет.
+ * Реализация общая с Qwen Code — core/gateway-entries.ts.
  *
  * ★ Не пишем: `enableThinking`/`thinkingMaxTokens` (что именно уйдёт в запрос
  * для generic-провайдера, не подтверждено) и `modelFallbacks` — в CLI он
@@ -70,8 +71,11 @@ import {
   OPENCLAW_MODELS,
   type OpenClawModelSpec,
 } from '../constants.js';
+import { catalogFor } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
+import { isGatewayEntry, planSharedArrayEdits } from '../core/gateway-entries.js';
 import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { asObject, asText } from '../core/json-shape.js';
 import type { JsonObject } from '../core/merge.js';
 import { currentPathContext, pathApi, type PathContext } from '../core/paths.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
@@ -91,18 +95,6 @@ const PLACEHOLDER_KEYS = ['YOUR_OPENAI_API_KEY', 'YOUR_API_KEY'];
 /** Актуальные id моделей каталога — для сброса устаревшего дефолта. */
 const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
-}
-
-/** Непустая строка без пробелов по краям либо undefined. */
-function asText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
-}
-
 /**
  * Путь к settings.json: `~/.factory/settings.json`, на Windows —
  * `%USERPROFILE%\.factory\settings.json` (док Settings, «Where settings live»).
@@ -117,39 +109,9 @@ function resolvePath(_scope: Scope): string {
   return droidSettingsPath();
 }
 
-/** Адрес шлюза для сравнения: без хвостовых `/`, без регистра. */
-function normalizeUrl(value: unknown): string | undefined {
-  const text = asText(value);
-  return text === undefined ? undefined : text.replace(/\/+$/, '').toLowerCase();
-}
-
-const OUR_URL = normalizeUrl(BASE_URL_OPENAI)!;
-
-/** true — запись ведёт на наш шлюз (значит, ею управляет установщик). */
-function isOurEntry(entry: unknown): boolean {
-  return normalizeUrl(asObject(entry)?.baseUrl) === OUR_URL;
-}
-
 /** Ссылка на кастомную модель, которую мы пишем и в `id`, и в дефолт. */
 function customRef(modelId: string): string {
   return `${CUSTOM_PREFIX}${modelId}`;
-}
-
-/**
- * Каталог установки: актуальные модели сети плюс явно запрошенная модель вне
- * каталога (без записи в `customModels` ссылка `custom:<model>` у Droid не
- * разрешится, и он молча уйдёт на свою модель). Лимиты незнакомой — осторожные.
- */
-function catalogFor(input: ApplyInput): OpenClawModelSpec[] {
-  const specs = [...OPENCLAW_MODELS];
-  if (input.modelExplicit && !CANONICAL_IDS.includes(input.model)) {
-    specs.push({
-      id: input.model,
-      name: input.model,
-      maxTokens: Math.min(...OPENCLAW_MODELS.map((m) => m.maxTokens)),
-    });
-  }
-  return specs;
 }
 
 /** Запись модели — поля схемы `customModels` (см. шапку). */
@@ -199,7 +161,7 @@ function knownEntries(list: readonly unknown[]): KnownEntry[] {
     known.push({
       id: typeof entry.id === 'string' ? entry.id : `${CUSTOM_PREFIX}${slug}-${ordinal}`,
       model: entry.model,
-      ours: isOurEntry(entry),
+      ours: isGatewayEntry(entry),
     });
   }
   return known;
@@ -216,29 +178,6 @@ function refuse(filePath: string, what: string): never {
   throw new Error(
     `${filePath}: ${what} Nothing was written — fix the file (or move it aside) and run the installer again.`,
   );
-}
-
-/** Правки общего массива `customModels` (стратегия — в шапке файла). */
-function planModelEdits(list: unknown, entries: JsonObject[]): JsonEdit[] {
-  const base = ['customModels'];
-  if (!Array.isArray(list)) return [{ path: base, value: entries }];
-
-  const ourIndexes = list.flatMap((entry, index) => (isOurEntry(entry) ? [index] : []));
-
-  if (ourIndexes.length > entries.length) {
-    let next = 0;
-    const rebuilt = list.flatMap((entry) => {
-      if (!isOurEntry(entry)) return [entry];
-      return next < entries.length ? [entries[next++]] : [];
-    });
-    return [{ path: base, value: rebuilt }];
-  }
-
-  return entries.map((entry, position) => ({
-    // Индекс -1 у jsonc-parser — «дописать в конец массива».
-    path: [...base, position < ourIndexes.length ? ourIndexes[position]! : -1],
-    value: entry,
-  }));
 }
 
 interface DefaultPlan {
@@ -320,7 +259,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
   const entries = catalogFor(input).map((spec) => modelEntry(spec, input.apiKey));
   const text = applyJsonEdits(
     doc.text,
-    [...planModelEdits(list, entries), ...defaults.edits],
+    [...planSharedArrayEdits(['customModels'], list, entries), ...defaults.edits],
     settingsPath,
   );
 

@@ -27,6 +27,7 @@ const pkg = JSON.parse(read('package.json')) as {
   description: string;
   keywords: string[];
   files: string[];
+  scripts: Record<string, string>;
 };
 
 const ids = toolIds();
@@ -123,6 +124,32 @@ describe('package.json', () => {
 
   it('ships the changelog, the README and the license with the build', () => {
     expect(pkg.files).toEqual(expect.arrayContaining(['dist', 'README.md', 'CHANGELOG.md', 'LICENSE']));
+  });
+
+  // ★ `tsc` собирает только src без тестов (tsconfig.json их исключает), а vitest
+  // типы не проверяет вовсе — ошибка типов в тесте жила бы незамеченной, пока тест
+  // «зелёный» по случайности. `typecheck` проверяет и то и другое, и публикация без
+  // него не проходит.
+  it('type-checks the sources AND the tests before every publish', () => {
+    expect(pkg.scripts.typecheck).toBe('tsc --noEmit && tsc --noEmit -p tsconfig.test.json');
+
+    const testConfig = JSON.parse(read('tsconfig.test.json').replace(/^\s*\/\/.*$/gm, '')) as {
+      extends: string;
+      include: string[];
+      exclude?: string[];
+    };
+    expect(testConfig.extends).toBe('./tsconfig.json');
+    expect(testConfig.include).toContain('src/**/*.test.ts');
+    // Базовый конфиг исключает тесты — наследовать это исключение нельзя.
+    expect((testConfig.exclude ?? []).some((pattern) => pattern.includes('.test.'))).toBe(false);
+
+    const steps = pkg.scripts.prepublishOnly!.split('&&').map((step) => step.trim());
+    expect(steps).toEqual([
+      'node scripts/check-clean-tree.mjs',
+      'npm run typecheck',
+      'npm run build',
+      'npm test',
+    ]);
   });
 });
 

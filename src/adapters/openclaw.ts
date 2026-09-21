@@ -48,8 +48,10 @@ import {
   openclawModelEntry,
   openclawModelRef,
 } from '../constants.js';
+import { catalogFor, catalogIds } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { asObject, entriesById } from '../core/json-shape.js';
 import { isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
 import { priceFor } from '../core/pricing.js';
 import { staleRefsNote } from '../core/stale-refs.js';
@@ -57,9 +59,6 @@ import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файл конфига — только владелец (rw-------). */
 const OWNER_ONLY_MODE = 0o600;
-
-/** Актуальные id моделей каталога — для прунинга устаревших алиасов и сброса primary. */
-const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
 /**
  * Разрешение пути:
@@ -75,16 +74,17 @@ function resolvePath(_scope: Scope): string {
   return join(homedir(), '.openclaw', 'openclaw.json');
 }
 
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
-}
+/** Проверка «ссылка на НАШ провайдер, а модели в каталоге этой установки нет». */
+type StaleCheck = (ref: unknown) => boolean;
 
-/** true — ссылка на НАШ провайдер, а модели в каталоге уже нет. */
-function isStale(ref: unknown): boolean {
-  return isStaleProviderModelRef(ref, OPENCLAW_PROVIDER_ID, CANONICAL_IDS);
+/**
+ * Живыми считаются модели каталога ЭТОЙ установки (core/catalog.ts): сеть плюс
+ * явно запрошенная модель вне каталога — её мы сами только что записали, и
+ * называть её «ушедшей» нельзя.
+ */
+function staleCheckFor(input: ApplyInput): StaleCheck {
+  const liveIds = catalogIds(input);
+  return (ref) => isStaleProviderModelRef(ref, OPENCLAW_PROVIDER_ID, liveIds);
 }
 
 /**
@@ -97,6 +97,7 @@ function agentModelEdits(
   path: JSONPath,
   model: unknown,
   primaryRef: string,
+  isStale: StaleCheck,
 ): { edits: JsonEdit[]; staleRefs: number } {
   if (typeof model === 'string') {
     return isStale(model)
@@ -139,14 +140,26 @@ function buildEdits(
   const edits: JsonEdit[] = [];
   // Сколько ссылок на убранные модели вычищено — для сообщения пользователю.
   let staleRefs = 0;
+  const isStale = staleCheckFor(input);
 
   // 1. Провайдер gonka. Каталог моделей строим FRESH из актуального набора:
   //    массив заменяется целиком, поэтому устаревшие модели прошлых версий
   //    установщика (напр. Qwen) исчезают, а дубли не появляются.
   //    Цена — живая на момент установки (input.pricing), иначе константа-фолбэк.
-  const models = OPENCLAW_MODELS.map((spec) => ({
+  //    Явно запрошенная модель вне каталога тоже попадает в него (core/catalog.ts):
+  //    primary, которого нет в каталоге провайдера, OpenClaw не находит.
+  //    Цена, уже записанная у модели, переживает запуск без живой цены: константа
+  //    идёт только новой записи (constants.ts, modelCost).
+  const recordedModels = entriesById(
+    asObject(asObject(asObject(existing.models)?.providers)?.[OPENCLAW_PROVIDER_ID])?.models,
+  );
+  const models = catalogFor(input).map((spec) => ({
     id: spec.id,
-    ...openclawModelEntry(spec, priceFor(input.pricing, spec.id)),
+    ...openclawModelEntry(
+      spec,
+      priceFor(input.pricing, spec.id),
+      recordedModels.get(spec.id)?.cost,
+    ),
   }));
   const provider = ['models', 'providers', OPENCLAW_PROVIDER_ID];
   edits.push(
@@ -242,7 +255,7 @@ function buildEdits(
   //    entries-and-multi-agent.md, docs/gateway/doctor/config-migrations.md).
   const agents = asObject(existing.agents);
   const collect = (path: JSONPath, agent: unknown) => {
-    const found = agentModelEdits(path, asObject(agent)?.model, primaryRef);
+    const found = agentModelEdits(path, asObject(agent)?.model, primaryRef, isStale);
     edits.push(...found.edits);
     staleRefs += found.staleRefs;
   };

@@ -33,7 +33,7 @@ import {
 import { tmpdir, platform } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { ompAdapter } from './omp.js';
+import { ompAdapter, ompAgentDir } from './omp.js';
 import type { ApplyInput } from './types.js';
 import {
   CODING_AGENT_DEFAULT_MODEL,
@@ -612,5 +612,42 @@ describe('ompAdapter.apply — backups & idempotency', () => {
     expect(result.configPath).toBe(join(custom, 'models.yml'));
     expect(existsSync(join(custom, 'config.yml'))).toBe(true);
     expect(existsSync(join(tmpDir, '.omp'))).toBe(false);
+  });
+});
+
+describe('ompAgentDir — чужая платформа через PathContext (0.5.0)', () => {
+  // Сверено 21.09.2026 по packages/utils/src/dirs.ts (main fb941af0): корень —
+  // path.join(os.homedir(), PI_CONFIG_DIR || '.omp') на ВСЕХ платформах, особого
+  // случая для Windows нет; PI_CODING_AGENT_DIR проходит через path.resolve, а
+  // именованный профиль его игнорирует.
+  const win = (env: NodeJS.ProcessEnv) => ({ platform: 'win32' as const, env, home: 'C:\\Users\\u' });
+  const linux = (env: NodeJS.ProcessEnv) => ({ platform: 'linux' as const, env, home: '/home/u' });
+
+  it('uses <home>\\.omp\\agent on Windows — no AppData special case', () => {
+    expect(ompAgentDir(win({}))).toBe('C:\\Users\\u\\.omp\\agent');
+    expect(ompAgentDir(win({ APPDATA: 'C:\\AD', LOCALAPPDATA: 'C:\\LAD' }))).toBe(
+      'C:\\Users\\u\\.omp\\agent',
+    );
+  });
+
+  it('honours PI_CONFIG_DIR, profiles and PI_CODING_AGENT_DIR with Windows separators', () => {
+    expect(ompAgentDir(win({ PI_CONFIG_DIR: '.omp-alt' }))).toBe('C:\\Users\\u\\.omp-alt\\agent');
+    expect(ompAgentDir(win({ OMP_PROFILE: 'work' }))).toBe('C:\\Users\\u\\.omp\\profiles\\work\\agent');
+    expect(ompAgentDir(win({ PI_CODING_AGENT_DIR: 'D:\\omp\\agent' }))).toBe('D:\\omp\\agent');
+    // Именованный профиль переопределение каталога агента игнорирует.
+    expect(ompAgentDir(win({ OMP_PROFILE: 'work', PI_CODING_AGENT_DIR: 'D:\\omp\\agent' }))).toBe(
+      'C:\\Users\\u\\.omp\\profiles\\work\\agent',
+    );
+  });
+
+  it('keeps the POSIX layout unchanged', () => {
+    expect(ompAgentDir(linux({}))).toBe('/home/u/.omp/agent');
+    expect(ompAgentDir(linux({ PI_PROFILE: 'legacy' }))).toBe('/home/u/.omp/profiles/legacy/agent');
+    expect(ompAgentDir(linux({ OMP_PROFILE: '', PI_PROFILE: 'legacy' }))).toBe('/home/u/.omp/agent');
+    expect(ompAgentDir(linux({ PI_CODING_AGENT_DIR: '/srv/omp' }))).toBe('/srv/omp');
+  });
+
+  it('rejects a Windows-reserved profile name the same way omp does', () => {
+    expect(() => ompAgentDir(win({ OMP_PROFILE: 'con' }))).toThrow(/Invalid omp profile/);
   });
 });

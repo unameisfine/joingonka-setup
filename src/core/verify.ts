@@ -7,9 +7,12 @@
  * ключа — как был OpenClaw-баг с голым именем env). Один запрос ловит это
  * сразу, вместо тихого 401 при первом использовании инструмента.
  *
- * Два режима — по тому, как инструмент обращается к нашему gateway:
+ * Три режима — по тому, как инструмент обращается к нашему gateway:
  *   - 'openai'    → POST {BASE_URL_OPENAI}/chat/completions, Bearer-ключ;
- *   - 'anthropic' → POST {BASE_URL}/v1/messages, x-api-key (только claude-code).
+ *   - 'anthropic' → POST {BASE_URL}/v1/messages, x-api-key (только claude-code);
+ *   - 'responses' → POST {BASE_URL_OPENAI}/responses, Bearer-ключ (Codex CLI: другого
+ *                   протокола он не умеет, и проверка через chat/completions
+ *                   подтверждала бы не тот маршрут шлюза, по которому он пойдёт).
  *
  * ★ Исход различает ТРИ вещи (аудит 19.09.2026). Раньше любой ответ, кроме
  * 200, означал «проверьте ключ» и выход с кодом 2 — под эту формулировку
@@ -56,8 +59,20 @@ const RETRY_DELAY_MS = 1500;
  */
 const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504]);
 
+/** Как инструмент ходит в шлюз — от этого зависит маршрут и форма пробного запроса. */
+export type VerifyApiMode = 'openai' | 'anthropic' | 'responses';
+
+/**
+ * Потолок ответа в пробе Responses API. У OpenAI значение меньше 16 отвергается
+ * (400 integer_below_min_value) — берём документированный минимум, чтобы пробу не
+ * отклонил ни наш шлюз (он передаёт число в `max_tokens`), ни строгий валидатор
+ * перед ним. Цель та же, что у `max_tokens: 1` в остальных режимах: подтвердить
+ * приём ключа, URL и модели, а не получить текст.
+ */
+const RESPONSES_MAX_OUTPUT_TOKENS = 16;
+
 export interface VerifyOptions {
-  apiMode: 'openai' | 'anthropic';
+  apiMode: VerifyApiMode;
   apiKey: string;
   model: string;
   /** Пауза между повторами; 0 в тестах, чтобы не ждать вживую. */
@@ -66,40 +81,63 @@ export interface VerifyOptions {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Пробный запрос одного режима: куда, с какими заголовками и телом. */
+interface Probe {
+  url: string;
+  headers: Record<string, string>;
+  body: unknown;
+}
+
+/**
+ * Минимальный запрос режима. Цель — подтвердить приём ключа/URL/модели, а не
+ * сгенерировать контент, поэтому потолок ответа всюду наименьший допустимый.
+ */
+function buildProbe({ apiMode, apiKey, model }: VerifyOptions): Probe {
+  const bearer = { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` };
+  const chatBody = { model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] };
+
+  switch (apiMode) {
+    case 'anthropic':
+      return {
+        url: `${BASE_URL}/v1/messages`,
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': ANTHROPIC_VERSION,
+        },
+        body: chatBody,
+      };
+    case 'responses':
+      // Форма запроса — как у самого Codex по HTTP: `store: false` и никакого
+      // `previous_response_id` (шлюз диалогов не хранит и ссылку на прошлый ответ
+      // отвергает 400 — gateway, modules/openai-responses/converter.ts).
+      return {
+        url: `${BASE_URL_OPENAI}/responses`,
+        headers: bearer,
+        body: {
+          model,
+          input: 'ping',
+          max_output_tokens: RESPONSES_MAX_OUTPUT_TOKENS,
+          store: false,
+        },
+      };
+    case 'openai':
+    default:
+      return { url: `${BASE_URL_OPENAI}/chat/completions`, headers: bearer, body: chatBody };
+  }
+}
+
 /** Одна попытка запроса. */
 async function attempt(opts: VerifyOptions): Promise<VerifyResult> {
-  const { apiMode, apiKey, model } = opts;
-  // Минимальный запрос: 1 токен. Цель — подтвердить приём ключа/URL/модели,
-  // а не сгенерировать контент.
-  const body = JSON.stringify({
-    model,
-    max_tokens: 1,
-    messages: [{ role: 'user', content: 'ping' }],
-  });
+  const probe = buildProbe(opts);
 
   try {
-    const signal = AbortSignal.timeout(TIMEOUT_MS);
-    const res =
-      apiMode === 'anthropic'
-        ? await fetch(`${BASE_URL}/v1/messages`, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              'x-api-key': apiKey,
-              'anthropic-version': ANTHROPIC_VERSION,
-            },
-            body,
-            signal,
-          })
-        : await fetch(`${BASE_URL_OPENAI}/chat/completions`, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              authorization: `Bearer ${apiKey}`,
-            },
-            body,
-            signal,
-          });
+    const res = await fetch(probe.url, {
+      method: 'POST',
+      headers: probe.headers,
+      body: JSON.stringify(probe.body),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
 
     if (res.ok) {
       return { ok: true, outcome: 'ok', status: res.status, detail: 'gateway responded OK' };

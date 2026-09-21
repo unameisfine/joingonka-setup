@@ -84,7 +84,9 @@ import {
   OPENCLAW_MODELS,
   type OpenClawModelSpec,
 } from '../constants.js';
+import { catalogFor } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
+import { nonEmptyString } from '../core/json-shape.js';
 import { currentPathContext, envValue, pathApi, type PathContext } from '../core/paths.js';
 import { staleRefsNote } from '../core/stale-refs.js';
 import {
@@ -127,32 +129,9 @@ function resolvePath(_scope: Scope): string {
   return kimiCodeConfigPath();
 }
 
-/** Непустая строка либо undefined. */
-function asText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
-
 /** Алиас модели в `[models]`: `joingonka/<id>`. */
 function aliasOf(modelId: string): string {
   return `${KIMI_PROVIDER_ID}/${modelId}`;
-}
-
-/**
- * Каталог установки: актуальные модели сети плюс явно запрошенная модель вне
- * каталога (сеть может получить модель раньше новой версии установщика; без
- * записи в `[models]` её нельзя ни выбрать, ни сделать дефолтом). Лимиты
- * незнакомой модели — осторожные.
- */
-function catalogFor(input: ApplyInput): OpenClawModelSpec[] {
-  const specs = [...OPENCLAW_MODELS];
-  if (input.modelExplicit && !CANONICAL_IDS.includes(input.model)) {
-    specs.push({
-      id: input.model,
-      name: input.model,
-      maxTokens: Math.min(...OPENCLAW_MODELS.map((m) => m.maxTokens)),
-    });
-  }
-  return specs;
 }
 
 /** Правки одной таблицы модели — поля `[models.<alias>]` из документации. */
@@ -173,7 +152,7 @@ function modelEdits(spec: OpenClawModelSpec): TomlEdit[] {
 function staleAliases(models: TomlTable, liveIds: ReadonlySet<string>): string[] {
   return Object.entries(models).flatMap(([name, entry]) => {
     const record = tomlTable(entry);
-    const modelId = asText(record?.model);
+    const modelId = nonEmptyString(record?.model);
     const stale = record?.provider === KIMI_PROVIDER_ID && modelId !== undefined && !liveIds.has(modelId);
     return stale ? [name] : [];
   });
@@ -191,7 +170,7 @@ interface DefaultPlan {
 /** Решение по дефолтной модели (правила — в шапке файла). */
 function planDefault(root: TomlTable, models: TomlTable, input: ApplyInput): DefaultPlan {
   const target = aliasOf(input.model);
-  const current = asText(root.default_model);
+  const current = nonEmptyString(root.default_model);
   const entry = current !== undefined ? tomlTable(models[current]) : undefined;
   // Наш ли текущий дефолт: по провайдеру записи, а для висячего алиаса — по префиксу.
   const ours =
@@ -199,7 +178,7 @@ function planDefault(root: TomlTable, models: TomlTable, input: ApplyInput): Def
       ? entry.provider === KIMI_PROVIDER_ID
       : current?.startsWith(`${KIMI_PROVIDER_ID}/`) === true;
   const currentId =
-    entry !== undefined ? asText(entry.model) : current?.slice(KIMI_PROVIDER_ID.length + 1);
+    entry !== undefined ? nonEmptyString(entry.model) : current?.slice(KIMI_PROVIDER_ID.length + 1);
   const live = ours && currentId !== undefined && CANONICAL_IDS.includes(currentId);
   const staleDefault = ours && !live && current !== target;
 
@@ -256,7 +235,7 @@ function secondaryEdits(
     poolKeys.delete(name);
   }
 
-  const current = asText(secondary.default_model);
+  const current = nonEmptyString(secondary.default_model);
   if (current !== undefined && removed.includes(current)) {
     edits.push({ op: 'set', table: ['secondary_model'], key: 'default_model', value: replacement });
     // Дефолт пула обязан быть одним из его ключей; пустая строка — «без подсказки».

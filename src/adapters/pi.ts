@@ -36,13 +36,14 @@
 import {
   BASE_URL_OPENAI,
   CODING_AGENT_DEFAULT_MODEL,
-  OPENCLAW_MODELS,
   PI_PROVIDER_ID,
   PI_PROVIDER_API,
   piModelEntry,
 } from '../constants.js';
+import { catalogFor, catalogIds } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { asObject, entriesById } from '../core/json-shape.js';
 import type { JsonObject } from '../core/merge.js';
 import {
   currentPathContext,
@@ -57,9 +58,6 @@ import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файл конфига — только владелец (rw-------): внутри литеральный ключ. */
 const OWNER_ONLY_MODE = 0o600;
-
-/** Актуальные id моделей каталога — для сброса устаревшего дефолта. */
-const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
 /**
  * Каталог агента Pi — там лежат models.json и settings.json.
@@ -98,12 +96,20 @@ function resolvePath(_scope: Scope): string {
 
 /**
  * Правки models.json: наш блок провайдера. Каталог моделей — целиком актуальным
- * набором, цена — живая на момент установки (input.pricing), иначе
- * константа-фолбэк.
+ * набором. Цена — живая на момент установки (input.pricing); нет живой — та, что
+ * уже записана у этой модели; константа-фолбэк — только новой записи
+ * (constants.ts, modelCost).
  */
-function buildModelsEdits(input: ApplyInput): JsonEdit[] {
+function buildModelsEdits(existing: JsonObject, input: ApplyInput): JsonEdit[] {
   const provider = ['providers', PI_PROVIDER_ID];
-  const models = OPENCLAW_MODELS.map((spec) => piModelEntry(spec, priceFor(input.pricing, spec.id)));
+  const recordedModels = entriesById(
+    asObject(asObject(existing.providers)?.[PI_PROVIDER_ID])?.models,
+  );
+  // Явно запрошенная модель вне каталога тоже попадает в него (core/catalog.ts):
+  // defaultModel, которого нет в models.json, Pi не находит.
+  const models = catalogFor(input).map((spec) =>
+    piModelEntry(spec, priceFor(input.pricing, spec.id), recordedModels.get(spec.id)?.cost),
+  );
   return [
     { path: [...provider, 'baseUrl'], value: BASE_URL_OPENAI },
     { path: [...provider, 'api'], value: PI_PROVIDER_API },
@@ -129,7 +135,9 @@ function planDefaultModel(
   const currentProvider = settings.defaultProvider;
   const currentModel = settings.defaultModel;
   const isOurs = currentProvider === PI_PROVIDER_ID;
-  const isStale = isOurs && typeof currentModel === 'string' && !CANONICAL_IDS.includes(currentModel);
+  // Живые — модели каталога ЭТОЙ установки: сеть плюс явно запрошенная вне каталога.
+  const isStale =
+    isOurs && typeof currentModel === 'string' && !catalogIds(input).includes(currentModel);
   const unset = typeof currentProvider !== 'string' || currentProvider.trim() === '';
 
   if (!input.modelExplicit && !unset && !isStale) {
@@ -179,7 +187,11 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
   const settingsDoc = readJsonConfig(readRaw(settingsFile), settingsFile);
   const plan = planDefaultModel(settingsDoc.value, input, settingsFile);
 
-  const modelsText = applyJsonEdits(modelsDoc.text, buildModelsEdits(input), configPath);
+  const modelsText = applyJsonEdits(
+    modelsDoc.text,
+    buildModelsEdits(modelsDoc.value, input),
+    configPath,
+  );
   // settings.json трогаем, только когда есть что менять.
   const settingsText =
     plan.edits.length > 0 ? applyJsonEdits(settingsDoc.text, plan.edits, settingsFile) : null;

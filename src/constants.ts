@@ -119,7 +119,7 @@ export interface ModelPrice {
 }
 
 /**
- * ФОЛБЭК цены для каталогов OpenClaw и Pi ($/1M токенов).
+ * ФОЛБЭК цены для каталогов OpenClaw, Pi, omp и Crush ($/1M токенов).
  *
  * Значения справочные — реальная тарификация считается на шлюзе, здесь они
  * нужны лишь чтобы инструмент показывал примерную стоимость в своём UI.
@@ -127,16 +127,50 @@ export interface ModelPrice {
  * Цена в GNK фиксирована (33/99 nGNK за токен), а в долларах плавает вместе с
  * курсом GNK, поэтому установщик берёт живые значения из публичного
  * GET /api/pricing (core/pricing.ts) и передаёт их в функции записи модели;
- * сюда они падают только при недоступности шлюза.
+ * сюда они падают только при недоступности шлюза — и только для НОВОЙ записи
+ * модели: уже записанную цену константа не затирает (см. modelCost).
  * Срез 19.09.2026: $0.0062 вход / $0.0185 выход за 1M.
  */
 const FALLBACK_PRICE: ModelPrice = { input: 0.0062, output: 0.0185 };
 
 /**
+ * ОТМЕНЁННАЯ константа цены — она стояла в пакете с 0.1.0 по 0.4.4 и завышала
+ * стоимость в UI инструмента в 5–11 раз (исправлено в 0.4.5). Нужна только для
+ * того, чтобы отличить её в чужом конфиге от настоящей живой цены.
+ */
+const RETIRED_FALLBACK_PRICE: ModelPrice = { input: 0.07, output: 0.1 };
+
+/**
+ * true — пара чисел из конфига похожа на цену, которую стоит СОХРАНИТЬ, когда
+ * живой цены в этом запуске нет: оба числа конечны и положительны, и это не
+ * отменённая константа 0.07 / 0.1 (она живой ценой не была никогда — сохранить её
+ * значило бы отменить исправление 0.4.5 всем, кто обновляется при недоступном шлюзе).
+ */
+export function isRecordedPrice(input: unknown, output: unknown): boolean {
+  const priced = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0;
+  if (!priced(input) || !priced(output)) return false;
+  return !(input === RETIRED_FALLBACK_PRICE.input && output === RETIRED_FALLBACK_PRICE.output);
+}
+
+/**
  * Блок `cost` записи модели. Кеш-чтение и кеш-запись приравнены ко входу:
  * отдельного тарифа на кеш у шлюза нет.
+ *
+ * ★ Порядок источников (вторая часть 0.5.0):
+ *   1. живая цена этого запуска (core/pricing.ts);
+ *   2. цена, УЖЕ записанная у этой модели в конфиге, — возвращается как есть,
+ *      вместе с полями, которые человек мог подправить руками;
+ *   3. константа-фолбэк — только для новой записи (или мусора на месте цены).
+ * Пока пункта 2 не было, повторный запуск при недоступном /api/pricing (таймаут
+ * 3 с) менял живую цену прошлого запуска на более грубую константу: установка
+ * переставала быть идемпотентной, а цена в UI инструмента — точной.
  */
-function modelCost(price?: ModelPrice): Record<string, number> {
+function modelCost(price?: ModelPrice, recorded?: unknown): unknown {
+  if (price === undefined && typeof recorded === 'object' && recorded !== null) {
+    const { input, output } = recorded as { input?: unknown; output?: unknown };
+    if (isRecordedPrice(input, output)) return recorded;
+  }
   const { input, output } = price ?? FALLBACK_PRICE;
   return { input, output, cacheRead: input, cacheWrite: input };
 }
@@ -213,11 +247,14 @@ export const OPENCLAW_DEFAULT_FALLBACKS: readonly string[] = [
  * Вынесено сюда, чтобы форма записи (cost/input/contextWindow) была SSOT
  * и не дублировалась в адаптере/тестах.
  *
- * @param price живая цена модели (core/pricing.ts); без неё — FALLBACK_PRICE.
+ * @param price        живая цена модели (core/pricing.ts);
+ * @param recordedCost блок `cost`, уже записанный у этой модели в конфиге, — он
+ *                     остаётся как есть, когда живой цены нет (см. modelCost).
  */
 export function openclawModelEntry(
   spec: OpenClawModelSpec,
   price?: ModelPrice,
+  recordedCost?: unknown,
 ): Record<string, unknown> {
   return {
     id: spec.id,
@@ -225,7 +262,7 @@ export function openclawModelEntry(
     input: ['text'],
     contextWindow: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW,
     maxTokens: spec.maxTokens,
-    cost: modelCost(price),
+    cost: modelCost(price, recordedCost),
   };
 }
 
@@ -363,16 +400,22 @@ export const PI_PROVIDER_API = 'openai-completions';
  * (128000/16384) не совпадают с реальными лимитами сети. `cost` у Pi — тоже
  * $ за 1M токенов (док pi, docs/models.md: «Per-million-token rates»).
  *
- * @param price живая цена модели (core/pricing.ts); без неё — FALLBACK_PRICE.
+ * @param price        живая цена модели (core/pricing.ts);
+ * @param recordedCost блок `cost`, уже записанный у этой модели в конфиге, — он
+ *                     остаётся как есть, когда живой цены нет (см. modelCost).
  */
-export function piModelEntry(spec: OpenClawModelSpec, price?: ModelPrice): Record<string, unknown> {
+export function piModelEntry(
+  spec: OpenClawModelSpec,
+  price?: ModelPrice,
+  recordedCost?: unknown,
+): Record<string, unknown> {
   const entry: Record<string, unknown> = {
     id: spec.id,
     name: spec.name,
     input: ['text'],
     contextWindow: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW,
     maxTokens: spec.maxTokens,
-    cost: modelCost(price),
+    cost: modelCost(price, recordedCost),
   };
   if (spec.reasoning) entry.reasoning = true;
   return entry;

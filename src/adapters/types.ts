@@ -8,6 +8,7 @@
  */
 
 import type { LivePricing } from '../core/pricing.js';
+import type { VerifyApiMode } from '../core/verify.js';
 
 /**
  * Куда устанавливаем конфигурацию:
@@ -33,9 +34,10 @@ export interface ApplyInput {
   modelExplicit?: boolean;
   /**
    * Живые цены моделей на момент установки (core/pricing.ts) — для адаптеров,
-   * которые пишут в конфиг `cost` (OpenClaw, Pi). Оркестратор запрашивает их
-   * один раз и только для адаптера с `wantsPricing`. Нет поля или `null`
-   * (шлюз недоступен, тесты) → адаптер пишет константу-фолбэк.
+   * которые пишут в конфиг цену (OpenClaw, Pi, omp, Crush). Оркестратор запрашивает
+   * их один раз и только для адаптера с `wantsPricing`. Нет поля или `null` (шлюз
+   * недоступен, тесты) → адаптер НЕ трогает цену, уже записанную у модели, а
+   * константу-фолбэк пишет только новой записи.
    */
   pricing?: LivePricing | null;
 }
@@ -68,9 +70,13 @@ export interface Adapter {
   /**
    * Как инструмент обращается к нашему gateway — определяет endpoint live-проверки
    * (core/verify): 'openai' → /v1/chat/completions (Bearer), 'anthropic' →
-   * /v1/messages (x-api-key, только claude-code). По умолчанию 'openai'.
+   * /v1/messages (x-api-key, только claude-code), 'responses' → /v1/responses
+   * (Bearer, Codex CLI). По умолчанию 'openai'.
+   *
+   * ★ Режим обязан совпадать с протоколом, которым инструмент реально ходит в
+   * шлюз: «✓ Verified» по чужому маршруту подтверждает не ту настройку.
    */
-  readonly apiMode?: 'openai' | 'anthropic';
+  readonly apiMode?: VerifyApiMode;
 
   /**
    * Модель по умолчанию именно для этого инструмента (когда пользователь не

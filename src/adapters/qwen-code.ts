@@ -41,7 +41,8 @@
  * однострочные массивы и съедает комментарий за элементом (core/json-config.ts).
  * Поэтому редкий случай «наших записей было БОЛЬШЕ, чем моделей в сети» решается
  * заменой массива целиком: значения чужих записей сохраняются, комментарии
- * внутри этого массива — нет.
+ * внутри этого массива — нет. Реализация общая с Factory Droid —
+ * core/gateway-entries.ts.
  *
  * ★ Лимиты. `generationConfig.contextWindowSize` — окно; потолок ответа —
  * `samplingParams.max_tokens` (другого поля нет). Побочный эффект, описанный в
@@ -71,8 +72,16 @@ import {
   OPENCLAW_MODELS,
   type OpenClawModelSpec,
 } from '../constants.js';
+import { catalogFor } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
+import {
+  gatewayUrlKey,
+  isGatewayEntry,
+  OUR_GATEWAY_URL_KEY,
+  planSharedArrayEdits,
+} from '../core/gateway-entries.js';
 import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { asObject, asText } from '../core/json-shape.js';
 import type { JsonObject } from '../core/merge.js';
 import {
   currentPathContext,
@@ -98,18 +107,6 @@ const DISCONTINUED_AUTH_TYPE = 'qwen-oauth';
 /** Актуальные id моделей каталога — для сброса устаревшего дефолта. */
 const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
-}
-
-/** Непустая строка без пробелов по краям либо undefined. */
-function asText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
-}
-
 /**
  * Путь к settings.json: <QWEN_HOME | ~/.qwen>/settings.json. QWEN_HOME — каталог;
  * ведущую `~` и относительный путь инструмент раскрывает сам (Storage.resolvePath),
@@ -125,37 +122,6 @@ export function qwenSettingsPath(ctx: PathContext = currentPathContext()): strin
 /** Окружение читается В МОМЕНТ ВЫЗОВА (тесты подменяют HOME/env). */
 function resolvePath(_scope: Scope): string {
   return qwenSettingsPath();
-}
-
-/** Адрес шлюза для сравнения: без хвостовых `/`, без регистра. */
-function normalizeUrl(value: unknown): string | undefined {
-  const text = asText(value);
-  return text === undefined ? undefined : text.replace(/\/+$/, '').toLowerCase();
-}
-
-const OUR_URL = normalizeUrl(BASE_URL_OPENAI)!;
-
-/** true — запись модели ведёт на наш шлюз (значит, ею управляет установщик). */
-function isOurEntry(entry: unknown): boolean {
-  return normalizeUrl(asObject(entry)?.baseUrl) === OUR_URL;
-}
-
-/**
- * Каталог установки: актуальные модели сети плюс явно запрошенная модель вне
- * каталога (сеть может получить модель раньше новой версии установщика; без
- * записи в `modelProviders` у Qwen Code для неё не будет ни адреса, ни ключа).
- * Лимиты незнакомой модели — осторожные.
- */
-function catalogFor(input: ApplyInput): OpenClawModelSpec[] {
-  const specs = [...OPENCLAW_MODELS];
-  if (input.modelExplicit && !CANONICAL_IDS.includes(input.model)) {
-    specs.push({
-      id: input.model,
-      name: input.model,
-      maxTokens: Math.min(...OPENCLAW_MODELS.map((m) => m.maxTokens)),
-    });
-  }
-  return specs;
 }
 
 /** Запись модели — поля `ModelConfig` (packages/core/src/models/types.ts). */
@@ -201,33 +167,6 @@ function assertShape(settings: JsonObject, filePath: string): void {
   }
 }
 
-/**
- * Правки общего массива `modelProviders.openai` (стратегия — в шапке файла):
- * наши записи заменяются на месте, недостающие дописываются в конец, и только
- * при избытке наших старых записей массив заменяется целиком.
- */
-function planModelEdits(bucket: unknown, entries: JsonObject[]): JsonEdit[] {
-  const base = ['modelProviders', AUTH_TYPE];
-  if (!Array.isArray(bucket)) return [{ path: base, value: entries }];
-
-  const ourIndexes = bucket.flatMap((entry, index) => (isOurEntry(entry) ? [index] : []));
-
-  if (ourIndexes.length > entries.length) {
-    let next = 0;
-    const rebuilt = bucket.flatMap((entry) => {
-      if (!isOurEntry(entry)) return [entry];
-      return next < entries.length ? [entries[next++]] : [];
-    });
-    return [{ path: base, value: rebuilt }];
-  }
-
-  return entries.map((entry, position) => ({
-    // Индекс -1 у jsonc-parser — «дописать в конец массива».
-    path: [...base, position < ourIndexes.length ? ourIndexes[position]! : -1],
-    value: entry,
-  }));
-}
-
 /** id записей модели по всем провайдерам файла, разложенные на «наши» и «чужие». */
 function declaredIds(settings: JsonObject): { ours: Set<string>; foreign: Set<string> } {
   const ours = new Set<string>();
@@ -236,7 +175,7 @@ function declaredIds(settings: JsonObject): { ours: Set<string>; foreign: Set<st
     if (!Array.isArray(bucket)) continue;
     for (const entry of bucket) {
       const id = asText(asObject(entry)?.id);
-      if (id !== undefined) (isOurEntry(entry) ? ours : foreign).add(id);
+      if (id !== undefined) (isGatewayEntry(entry) ? ours : foreign).add(id);
     }
   }
   return { ours, foreign };
@@ -254,7 +193,7 @@ interface DefaultPlan {
 function planDefault(settings: JsonObject, input: ApplyInput): DefaultPlan {
   const model = asObject(settings.model);
   const currentName = asText(model?.name);
-  const currentUrl = normalizeUrl(model?.baseUrl);
+  const currentUrl = gatewayUrlKey(model?.baseUrl);
   const authType = asText(asObject(asObject(settings.security)?.auth)?.selectedType);
 
   // Наша ли выбранная модель? С парным baseUrl — однозначно. Без пары (старые
@@ -264,7 +203,7 @@ function planDefault(settings: JsonObject, input: ApplyInput): DefaultPlan {
   const isOurs =
     currentName !== undefined &&
     (currentUrl !== undefined
-      ? currentUrl === OUR_URL
+      ? currentUrl === OUR_GATEWAY_URL_KEY
       : ids.ours.has(currentName) && !ids.foreign.has(currentName));
   const oursLive = isOurs && CANONICAL_IDS.includes(currentName!);
   const retiredNote =
@@ -360,7 +299,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     doc.text,
     [
       { path: ['env', API_KEY_ENV], value: input.apiKey },
-      ...planModelEdits(bucket, catalogFor(input).map(modelEntry)),
+      ...planSharedArrayEdits(['modelProviders', AUTH_TYPE], bucket, catalogFor(input).map(modelEntry)),
       ...defaults.edits,
     ],
     settingsPath,

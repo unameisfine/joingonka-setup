@@ -400,3 +400,65 @@ describe('run() — сообщения об ошибках берут списо
     );
   });
 });
+
+describe('run() — live-проверка идёт протоколом инструмента (0.5.0)', () => {
+  const deps = (): RunDeps => ({
+    askTool: vi.fn(),
+    askApiKey: vi.fn().mockResolvedValue('jg-test123'),
+  });
+
+  const ENV_KEYS = ['CODEX_HOME'] as const;
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const key of ENV_KEYS) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  /** Куда и с какой моделью ушла проба. */
+  const probes = (fetchMock: ReturnType<typeof vi.fn>) =>
+    fetchMock.mock.calls
+      .filter(([url]) => !String(url).endsWith('/api/pricing'))
+      .map(([url, init]) => ({
+        url: String(url),
+        model: JSON.parse((init as { body: string }).body).model as string,
+      }));
+
+  it('codex: checks /v1/responses — the only protocol Codex speaks — with the model it wrote', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const outcome = await run({ tool: 'codex' }, deps());
+
+    expect(outcome.verification?.ok).toBe(true);
+    expect(probes(fetchMock)).toEqual([
+      { url: 'https://gate.joingonka.ai/v1/responses', model: 'deepseek-ai/DeepSeek-V4-Flash-0731' },
+    ]);
+    const toml = readFileSync(join(tmpDir, '.codex', 'config.toml'), 'utf-8');
+    expect(toml).toContain('wire_api = "responses"');
+    expect(toml).toContain('model = "deepseek-ai/DeepSeek-V4-Flash-0731"');
+  });
+
+  it('claude-code keeps /v1/messages and everything else /v1/chat/completions', async () => {
+    const expected: Record<string, string> = {
+      'claude-code': 'https://gate.joingonka.ai/v1/messages',
+      hermes: 'https://gate.joingonka.ai/v1/chat/completions',
+      cline: 'https://gate.joingonka.ai/v1/chat/completions',
+    };
+    for (const [tool, url] of Object.entries(expected)) {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '{}' });
+      vi.stubGlobal('fetch', fetchMock);
+
+      await run({ tool }, deps());
+
+      expect(probes(fetchMock).map((p) => p.url), tool).toEqual([url]);
+    }
+  });
+});

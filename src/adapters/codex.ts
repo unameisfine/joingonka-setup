@@ -100,6 +100,7 @@ import {
   modelLimits,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
+import { nonEmptyString } from '../core/json-shape.js';
 import { currentPathContext, envValue, pathApi, type PathContext } from '../core/paths.js';
 import { staleRefsNote } from '../core/stale-refs.js';
 import {
@@ -143,11 +144,6 @@ function resolvePath(_scope: Scope): string {
   return codexConfigPath();
 }
 
-/** Непустая строка либо undefined. */
-function asText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
-
 const setRoot = (key: string, value: string | number): TomlEdit => ({ op: 'set', table: [], key, value });
 
 interface DefaultPlan {
@@ -167,8 +163,8 @@ interface DefaultPlan {
 
 /** Решение по дефолтной модели (правила — в шапке файла). */
 function planDefault(root: TomlTable, input: ApplyInput): DefaultPlan {
-  const provider = asText(root.model_provider);
-  const model = asText(root.model);
+  const provider = nonEmptyString(root.model_provider);
+  const model = nonEmptyString(root.model);
   const wasOurs = provider === CODEX_PROVIDER_ID;
   const live = wasOurs && model !== undefined && CANONICAL_IDS.includes(model);
 
@@ -283,8 +279,8 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
   }
 
   // review_model идёт к тому же провайдеру, что и основная модель.
-  const reviewModel = asText(doc.value.review_model);
-  const wasOurs = asText(doc.value.model_provider) === CODEX_PROVIDER_ID;
+  const reviewModel = nonEmptyString(doc.value.review_model);
+  const wasOurs = nonEmptyString(doc.value.model_provider) === CODEX_PROVIDER_ID;
   let staleRefs = defaults.staleRefs;
   const reviewLines: string[] = [];
   if (reviewModel !== undefined && reviewModel !== defaults.effectiveModel && !CANONICAL_IDS.includes(reviewModel)) {
@@ -371,9 +367,9 @@ export const codexAdapter: Adapter = {
   id: 'codex',
   label: 'Codex CLI (OpenAI Responses-compatible)',
   format: 'toml',
-  // Live-проверка ключа и модели идёт через /v1/chat/completions; сам Codex
-  // ходит в /v1/responses того же шлюза (режима 'responses' у проверки нет).
-  apiMode: 'openai',
+  // Codex ходит в /v1/responses — live-проверка идёт тем же маршрутом (до второй
+  // части 0.5.0 она шла через /v1/chat/completions и подтверждала не его протокол).
+  apiMode: 'responses',
   // Кодовый агент, которому установщик ПИШЕТ модель: по умолчанию DeepSeek V4 Flash.
   defaultModel: CODING_AGENT_DEFAULT_MODEL,
   resolvePath,

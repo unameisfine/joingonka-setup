@@ -11,8 +11,10 @@
  *
  * Полный незнакомый id вида `вендор/модель` пропускаем с предупреждением:
  * сеть может получить модель раньше, чем выйдет новая версия установщика, и
- * жёсткий запрет отнял бы этот путь. Короткое незнакомое слово — почти всегда
- * опечатка в алиасе, поэтому отказ.
+ * жёсткий запрет отнял бы этот путь. Адаптеры кладут такую модель и в каталог
+ * провайдера — с осторожными лимитами и только в запуске с явным `--model`
+ * (core/catalog.ts); предупреждение говорит и об этом. Короткое незнакомое слово
+ * — почти всегда опечатка в алиасе, поэтому отказ.
  */
 import { DEFAULT_MODEL, DEEPSEEK_MODEL, GLM_MODEL, OPENCLAW_MODELS } from '../constants.js';
 
@@ -91,10 +93,16 @@ export function canonicalModel(input?: string, adapterDefault?: string): Resolve
     throw new Error(`Unknown model "${raw}", so the config was not touched. ${ALTERNATIVES}`);
   }
 
+  // ★ Три вещи, которые человек должен узнать СЕЙЧАС (core/catalog.ts): модель
+  // записана как есть; её лимиты — осторожные, а не измеренные; следующий запуск
+  // без `--model` сочтёт модель вне каталога ушедшей и вернёт дефолт — установщик
+  // не отличает модель, которой в его каталоге ЕЩЁ нет, от той, которой УЖЕ нет.
   return {
     model: raw,
     warning:
-      `Model "${raw}" is not in this installer's catalog — writing it as given. ` +
-      `If the tool reports an unknown model, check https://gate.joingonka.ai/v1/models.`,
+      `Model "${raw}" is not in this installer's catalog — writing it as given, with ` +
+      `conservative limits. Keep passing --model ${raw} when you re-run the installer: ` +
+      `a run without it treats a model outside the catalog as retired and goes back to the ` +
+      `default. If the tool reports an unknown model, check https://gate.joingonka.ai/v1/models.`,
   };
 }

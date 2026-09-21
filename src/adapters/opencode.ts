@@ -71,14 +71,15 @@
 import {
   BASE_URL_OPENAI,
   CODING_AGENT_DEFAULT_MODEL,
-  OPENCLAW_MODELS,
   OPENCODE_PROVIDER_ID,
   OPENCODE_NPM,
   OPENCODE_DEFAULT_MODEL,
   opencodeModelEntry,
 } from '../constants.js';
+import { catalogFor, catalogIds } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { asObject } from '../core/json-shape.js';
 import {
   inheritedModel,
   pickLayeredConfig,
@@ -99,9 +100,6 @@ import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файлы конфига/ключей — только владелец (rw-------). */
 const OWNER_ONLY_MODE = 0o600;
-
-/** Актуальные id моделей каталога — для прунинга устаревших и сброса дефолта. */
-const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
 /** Глобальные конфиги opencode по УБЫВАНИЮ приоритета загрузки (config.ts, loadGlobal). */
 const GLOBAL_CONFIG_NAMES = ['opencode.jsonc', 'opencode.json', 'config.json'] as const;
@@ -140,36 +138,33 @@ function resolvePath(_scope: Scope): string {
   return opencodePaths().config;
 }
 
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
-}
-
-/** Каталог наших моделей в форме opencode: { "<id>": { name, limit } }. */
-function buildModels(): JsonObject {
+/**
+ * Каталог наших моделей в форме opencode: { "<id>": { name, limit } } — модели сети
+ * плюс явно запрошенная модель вне каталога (core/catalog.ts): дефолт, которого
+ * нет в каталоге провайдера, opencode не находит.
+ */
+function buildModels(input: ApplyInput): JsonObject {
   const models: JsonObject = {};
-  for (const spec of OPENCLAW_MODELS) {
+  for (const spec of catalogFor(input)) {
     models[spec.id] = opencodeModelEntry(spec) as JsonObject;
   }
   return models;
 }
 
-/** true — ссылка на НАШ провайдер, а модели в каталоге уже нет. */
-function isStale(ref: unknown): boolean {
-  return isStaleProviderModelRef(ref, OPENCODE_PROVIDER_ID, CANONICAL_IDS);
+/** true — ссылка на НАШ провайдер, а модели в каталоге этой установки нет. */
+function isStale(ref: unknown, liveIds: readonly string[]): boolean {
+  return isStaleProviderModelRef(ref, OPENCODE_PROVIDER_ID, liveIds);
 }
 
 /** Блок нашего провайдера; каталог моделей — целиком актуальным набором. */
-function providerEdits(): JsonEdit[] {
+function providerEdits(input: ApplyInput): JsonEdit[] {
   const provider = ['provider', OPENCODE_PROVIDER_ID];
   return [
     { path: [...provider, 'npm'], value: OPENCODE_NPM },
     { path: [...provider, 'name'], value: 'JoinGonka (Gonka)' },
     // apiKey в options НЕ пишем: ключ живёт в нативном auth.json.
     { path: [...provider, 'options', 'baseURL'], value: BASE_URL_OPENAI },
-    { path: [...provider, 'models'], value: buildModels() },
+    { path: [...provider, 'models'], value: buildModels(input) },
   ];
 }
 
@@ -198,8 +193,9 @@ function buildEdits(
 ): { edits: JsonEdit[]; model: string; staleRefs: number } {
   const edits: JsonEdit[] = [
     { path: ['$schema'], value: 'https://opencode.ai/config.json' },
-    ...providerEdits(),
+    ...providerEdits(input),
   ];
+  const liveIds = catalogIds(input);
 
   const own = existing.model;
   const current = typeof own === 'string' && own.trim() !== '' ? own : inherited;
@@ -208,7 +204,7 @@ function buildEdits(
   if (input.modelExplicit) {
     model = `${OPENCODE_PROVIDER_ID}/${input.model}`;
     edits.push({ path: ['model'], value: model });
-  } else if (current === undefined || isStale(current)) {
+  } else if (current === undefined || isStale(current, liveIds)) {
     model = OPENCODE_DEFAULT_MODEL;
     edits.push({ path: ['model'], value: model });
   } else {
@@ -219,13 +215,13 @@ function buildEdits(
   const staleEdits = opencodeStaleRefEdits(
     existing,
     OPENCODE_PROVIDER_ID,
-    CANONICAL_IDS,
+    liveIds,
     replacementFor(input),
   );
   edits.push(...staleEdits);
 
   // Устаревшую `model` из файла ниже считает legacyEdits — там она и чинится.
-  return { edits, model, staleRefs: staleEdits.length + (isStale(own) ? 1 : 0) };
+  return { edits, model, staleRefs: staleEdits.length + (isStale(own, liveIds) ? 1 : 0) };
 }
 
 /**
@@ -235,12 +231,13 @@ function buildEdits(
  */
 function legacyEdits(existing: JsonObject, input: ApplyInput): { edits: JsonEdit[]; staleRefs: number } {
   const replacement = replacementFor(input);
+  const liveIds = catalogIds(input);
   const stale: JsonEdit[] = [
-    ...(isStale(existing.model) ? [{ path: ['model'], value: replacement }] : []),
-    ...opencodeStaleRefEdits(existing, OPENCODE_PROVIDER_ID, CANONICAL_IDS, replacement),
+    ...(isStale(existing.model, liveIds) ? [{ path: ['model'], value: replacement }] : []),
+    ...opencodeStaleRefEdits(existing, OPENCODE_PROVIDER_ID, liveIds, replacement),
   ];
   const hasOurBlock = asObject(asObject(existing.provider)?.[OPENCODE_PROVIDER_ID]) !== undefined;
-  return { edits: [...(hasOurBlock ? providerEdits() : []), ...stale], staleRefs: stale.length };
+  return { edits: [...(hasOurBlock ? providerEdits(input) : []), ...stale], staleRefs: stale.length };
 }
 
 /**

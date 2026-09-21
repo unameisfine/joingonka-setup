@@ -53,19 +53,21 @@
  * Каталог агента: именованный профиль (OMP_PROFILE, наследный PI_PROFILE) →
  * ~/.omp/profiles/<имя>/agent; иначе PI_CODING_AGENT_DIR; иначе
  * ~/<PI_CONFIG_DIR|.omp>/agent. XDG-переезд omp на конфиги не распространяется.
+ * На Windows раскладка та же, под домашним каталогом пользователя
+ * (C:\Users\<имя>\.omp\agent) — см. ompAgentDir.
  */
-import { join, resolve } from 'node:path';
-import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { Document, isMap, isScalar, isSeq } from 'yaml';
 import {
   BASE_URL_OPENAI,
   CODING_AGENT_DEFAULT_MODEL,
-  OPENCLAW_MODELS,
   piModelEntry,
 } from '../constants.js';
+import { catalogFor, catalogIds } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import { readJsonConfig } from '../core/json-config.js';
+import { entriesById } from '../core/json-shape.js';
+import { currentPathContext, pathApi, type PathContext } from '../core/paths.js';
 import { priceFor } from '../core/pricing.js';
 import { staleRefsNote } from '../core/stale-refs.js';
 import { ensureMapAt, loadYamlMap, renderYaml } from '../core/yaml-config.js';
@@ -80,9 +82,6 @@ const OMP_PROVIDER_API = 'openai-completions';
 /** Права на models.yml — только владелец (rw-------): внутри литеральный ключ. */
 const OWNER_ONLY_MODE = 0o600;
 
-/** Актуальные id моделей каталога — для сброса устаревшего дефолта. */
-const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
-
 /** Хвост уровня размышлений у селектора роли (docs/models.md, «CLI and pattern parsing»). */
 const THINKING_SUFFIX = /:(off|minimal|low|medium|high|xhigh|max)$/;
 
@@ -96,8 +95,8 @@ const WINDOWS_RESERVED_RE = /^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?$/i;
  * Некорректное имя — отказ: omp с таким именем не стартует, а мы записали бы
  * конфиг в каталог, который он никогда не прочитает.
  */
-function activeProfile(): string | undefined {
-  const raw = process.env.OMP_PROFILE !== undefined ? process.env.OMP_PROFILE : process.env.PI_PROFILE;
+function activeProfile(ctx: PathContext): string | undefined {
+  const raw = ctx.env.OMP_PROFILE !== undefined ? ctx.env.OMP_PROFILE : ctx.env.PI_PROFILE;
   const name = raw?.trim();
   if (!name || name === 'default') return undefined;
   if (name.endsWith('.') || !PROFILE_NAME_RE.test(name) || WINDOWS_RESERVED_RE.test(name)) {
@@ -109,15 +108,25 @@ function activeProfile(): string | undefined {
   return name;
 }
 
-/** Каталог агента omp; homedir()/env читаются В МОМЕНТ ВЫЗОВА (тесты подменяют HOME/env). */
-function agentDir(): string {
-  const root = join(homedir(), process.env.PI_CONFIG_DIR || '.omp');
-  const profile = activeProfile();
+/**
+ * Каталог агента omp. Сверено 21.09.2026 по packages/utils/src/dirs.ts (main
+ * fb941af0 — getBaseConfigRoot, DirResolver): корень — path.join(os.homedir(),
+ * PI_CONFIG_DIR || '.omp') на ВСЕХ платформах, особого случая для Windows у omp
+ * нет; PI_CODING_AGENT_DIR проходит через path.resolve.
+ *
+ * Окружение приходит параметром — так Windows-ветка проверяется тестом на любой
+ * машине (до второй части 0.5.0 путь считался через node:path/homedir напрямую).
+ */
+export function ompAgentDir(ctx: PathContext = currentPathContext()): string {
+  const { join, resolve } = pathApi(ctx);
+  // `||`, а не envValue: omp берёт PI_CONFIG_DIR как есть, без trim.
+  const root = join(ctx.home, ctx.env.PI_CONFIG_DIR || '.omp');
+  const profile = activeProfile(ctx);
   if (profile) {
     // Именованный профиль PI_CODING_AGENT_DIR игнорирует (docs/config-usage.md).
     return join(root, 'profiles', profile, 'agent');
   }
-  const override = process.env.PI_CODING_AGENT_DIR;
+  const override = ctx.env.PI_CODING_AGENT_DIR;
   if (typeof override === 'string' && override.trim() !== '') {
     return resolve(override.trim());
   }
@@ -128,15 +137,17 @@ function agentDir(): string {
  * Файл из пары `<имя>.yml` / `<имя>.yaml`: omp читает первый существующий, а
  * существующий .yaml обновляет на месте. Нет ни одного — канонический .yml.
  */
-function yamlPair(dir: string, name: string): string {
+function yamlPair(dir: string, name: string, ctx: PathContext): string {
+  const { join } = pathApi(ctx);
   const yml = join(dir, `${name}.yml`);
   const yaml = join(dir, `${name}.yaml`);
   return !existsSync(yml) && existsSync(yaml) ? yaml : yml;
 }
 
-/** Основной конфиг адаптера — каталог провайдеров. */
+/** Основной конфиг адаптера — каталог провайдеров; окружение читается В МОМЕНТ ВЫЗОВА. */
 function resolvePath(_scope: Scope): string {
-  return yamlPair(agentDir(), 'models');
+  const ctx = currentPathContext();
+  return yamlPair(ompAgentDir(ctx), 'models', ctx);
 }
 
 /** Правки models.yml: наш провайдер; каталог моделей — целиком актуальным набором. */
@@ -155,7 +166,15 @@ function editModels(doc: Document, filePath: string, input: ApplyInput): void {
   // `cost` ($ за 1M токенов, как в примерах docs/models.md) — живая цена на момент
   // установки (input.pricing), иначе константа-фолбэк; у omp это плоская цена,
   // по которой он считает стоимость сессии.
-  const models = OPENCLAW_MODELS.map((spec) => piModelEntry(spec, priceFor(input.pricing, spec.id)));
+  // Явно запрошенная модель вне каталога тоже попадает в него (core/catalog.ts):
+  // роль, указывающую на модель, которой нет в models.yml, omp не разрешит.
+  // Цена, уже записанная у модели, переживает запуск без живой цены: константа идёт
+  // только новой записи (constants.ts, modelCost).
+  const recordedNode = doc.getIn([...provider, 'models'], true);
+  const recordedModels = entriesById(isSeq(recordedNode) ? recordedNode.toJSON() : undefined);
+  const models = catalogFor(input).map((spec) =>
+    piModelEntry(spec, priceFor(input.pricing, spec.id), recordedModels.get(spec.id)?.cost),
+  );
   doc.setIn([...provider, 'models'], doc.createNode(models));
 }
 
@@ -164,11 +183,14 @@ function isOurs(selector: unknown): selector is string {
   return typeof selector === 'string' && selector.startsWith(`${OMP_PROVIDER_ID}/`);
 }
 
-/** Наш селектор, модели которого в каталоге больше нет (чужие и актуальные — false). */
-function isOurStale(selector: unknown): selector is string {
+/**
+ * Наш селектор, модели которого нет в каталоге ЭТОЙ установки (чужие и актуальные —
+ * false). `liveIds` — core/catalog.ts: сеть плюс явно запрошенная модель вне каталога.
+ */
+function isOurStale(selector: unknown, liveIds: readonly string[]): selector is string {
   if (!isOurs(selector)) return false;
   const modelId = selector.slice(OMP_PROVIDER_ID.length + 1).replace(THINKING_SUFFIX, '');
-  return !CANONICAL_IDS.includes(modelId);
+  return !liveIds.includes(modelId);
 }
 
 /** Что делать с modelRoles.default. */
@@ -185,7 +207,7 @@ function decideDefault(current: unknown, input: ApplyInput): DefaultDecision {
   if (input.modelExplicit || typeof current !== 'string' || current.trim() === '') {
     return { action: 'write', ref };
   }
-  if (isOurStale(current)) {
+  if (isOurStale(current, catalogIds(input))) {
     return { action: 'write', ref };
   }
   return { action: 'keep', current, ours: isOurs(current) };
@@ -202,7 +224,7 @@ function decideDefault(current: unknown, input: ApplyInput): DefaultDecision {
  * Формат сверен 21.09.2026 по docs/settings.md, раздел «Models».
  * Возвращает число вычищенных ссылок.
  */
-function cleanStaleRefs(doc: Document, replacement: string): number {
+function cleanStaleRefs(doc: Document, replacement: string, liveIds: readonly string[]): number {
   let cleaned = 0;
 
   const roles = doc.getIn(['modelRoles'], true);
@@ -210,7 +232,7 @@ function cleanStaleRefs(doc: Document, replacement: string): number {
     for (const pair of roles.items) {
       const role = isScalar(pair.key) ? pair.key.value : pair.key;
       if (role === 'default' || typeof role !== 'string') continue;
-      if (isOurStale(roles.get(role))) {
+      if (isOurStale(roles.get(role), liveIds)) {
         roles.set(role, replacement);
         cleaned += 1;
       }
@@ -223,7 +245,7 @@ function cleanStaleRefs(doc: Document, replacement: string): number {
       const chain = pair.value;
       if (!isSeq(chain)) continue;
       for (let i = chain.items.length - 1; i >= 0; i -= 1) {
-        if (isOurStale(chain.get(i))) {
+        if (isOurStale(chain.get(i), liveIds)) {
           chain.delete(i);
           cleaned += 1;
         }
@@ -235,10 +257,12 @@ function cleanStaleRefs(doc: Document, replacement: string): number {
 }
 
 async function apply(input: ApplyInput): Promise<ApplyResult> {
-  const dir = agentDir();
+  const ctx = currentPathContext();
+  const { join } = pathApi(ctx);
+  const dir = ompAgentDir(ctx);
 
   // 1) models.yml. Читаем ДО любых записей: неразбираемый файл = отказ целиком.
-  const modelsFile = yamlPair(dir, 'models');
+  const modelsFile = yamlPair(dir, 'models', ctx);
   const modelsRaw = readRaw(modelsFile);
   const notes: string[] = [];
   let modelsDoc: Document;
@@ -256,15 +280,17 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
   editModels(modelsDoc, modelsFile, input);
 
   // 2) config.yml — тоже читаем заранее: omp с битым config.yml не стартует вовсе.
-  const configFile = yamlPair(dir, 'config');
+  const configFile = yamlPair(dir, 'config', ctx);
   const configRaw = readRaw(configFile);
   const configDoc = loadYamlMap(configRaw, configFile);
   ensureMapAt(configDoc, ['modelRoles'], configFile);
   const currentDefault = configDoc.getIn(['modelRoles', 'default']);
   const decision = decideDefault(currentDefault, input);
+  const liveIds = catalogIds(input);
   // Чистка остальных ссылок идёт всегда — даже когда дефолт чужой и остаётся как был.
   const staleRefs =
-    cleanStaleRefs(configDoc, `${OMP_PROVIDER_ID}/${input.model}`) + (isOurStale(currentDefault) ? 1 : 0);
+    cleanStaleRefs(configDoc, `${OMP_PROVIDER_ID}/${input.model}`, liveIds) +
+    (isOurStale(currentDefault, liveIds) ? 1 : 0);
   // Рядом с наследным settings.json config.yml не создаём: иначе omp не перенесёт
   // настройки (перенос идёт, только пока config.yml нет — settings.ts).
   const legacySettings = configRaw == null && existsSync(join(dir, 'settings.json'));

@@ -94,7 +94,8 @@ Details worth knowing:
 - An existing choice is respected where a tool can hold several providers (every tool with a written config except Claude Code and Hermes): if the config already points at another provider or at a current Gonka model, a plain re-run leaves the default alone and tells you how to switch. Two deliberate exceptions — a Codex config that selects no provider at all, and a Qwen Code setup still on the discontinued `qwen-oauth` tier — are explained under [Tool notes](#tool-notes). Claude Code and Hermes have a single model slot, so it is set on every run. An explicit `--model` is always written — and the installer makes sure it takes effect, even where the tool keeps its choice in another file (see [Tool notes](#tool-notes)).
 - **OpenClaw** gets a primary model plus fallbacks (`agents.defaults.model.fallbacks`: GLM, then MiniMax), so a busy model switches the agent over instead of failing it. Your own fallback list is kept — only retired Gonka models are dropped from it.
 - **Claude Code** gets the model pinned (`ANTHROPIC_MODEL` and the `opus` / `sonnet` aliases; `haiku`, used for background tasks, goes to MiniMax) and its real limits declared (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`). Without them Claude Code assumes its own window and stops compacting in time.
-- Models that left the network (`kimi`, `glm-5.2`, `qwen`) are refused **before anything is written**, and so is an unknown shortcut (usually a typo). A full `vendor/model` id the installer does not know is written as given, with a warning — the network may get a model before the installer learns about it.
+- Models that left the network (`kimi`, `glm-5.2`, `qwen`) are refused **before anything is written**, and so is an unknown shortcut (usually a typo). A full `vendor/model` id the installer does not know is written as given, with a warning — the network may get a model before the installer learns about it. It also goes into the tool's model catalog, with conservative limits (200,000 context, 8,192 output), so that the tool can actually find it.
+- Keep passing `--model` for such a model: a later run **without** the flag treats a model outside the installer's catalog as retired and goes back to the default.
 - Re-running the installer also cleans up after retired models: besides refreshing its own model catalog it repoints or removes references to them in fallbacks, per-agent models and `small_model`. References to other providers are never touched.
 
 ## Tool notes
@@ -129,7 +130,7 @@ Zed does not read keys from `settings.json`, so the installer writes the provide
 
 ## What the live check means
 
-Every run ends with a real one-token request made with your key, the base URL and the model (skip it with `--no-verify`):
+Every run ends with a real minimal request made with your key, the base URL and the model (skip it with `--no-verify`). It goes over the protocol the tool itself uses — Chat Completions for most tools, the Anthropic Messages API for Claude Code, the Responses API for Codex CLI — so a green check vouches for the route the tool will really take:
 
 - **`✓ Verified`** — the gateway answered 200.
 - **`✗ Verification FAILED`, exit code 2** — a configuration problem: the key, the model id or the URL was rejected (401, 403, 400, 404 …). The config was written, but it will not work until that is fixed.
@@ -142,7 +143,7 @@ Exit code 1 means the setup itself stopped — an unknown tool or model, a confi
 - Files are read as what they are — JSON with comments and trailing commas, YAML, TOML — and edited in place: only the installer's own keys change; other providers, MCP servers, themes, comments and formatting stay as they were.
 - A file that cannot be parsed is **not** replaced by a fresh one. The installer stops, writes nothing and tells you the file and the line. The same goes for a key that holds something unexpected where the installer has to add its settings (say, `"provider": "x"`): your value is not overwritten. A refused run leaves nothing behind — not even a backup file.
 - When the write does happen, a timestamped `.bak` copy of the previous file is made first.
-- For OpenClaw, Pi, omp and Crush the per-token prices shown in the tool's UI are taken live from the gateway at install time (the USD price floats with GNK); if the gateway cannot be reached, built-in values are used.
+- For OpenClaw, Pi, omp and Crush the per-token prices shown in the tool's UI are taken live from the gateway at install time (the USD price floats with GNK). If the gateway cannot be reached, a price that is already in your config stays as it is, and built-in values are used only for a model entry that is new.
 
 ## Get an API key
 

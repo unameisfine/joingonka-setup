@@ -1,0 +1,15 @@
+{
+  // Проверка типов ТЕСТОВ. Базовый tsconfig.json тесты исключает (они не должны
+  // попадать в dist), а vitest типы не проверяет вовсе — без этого файла ошибка
+  // типов в тесте жила бы незамеченной. Запуск: `npm run typecheck` (его же гоняет
+  // prepublishOnly перед сборкой). Ничего не пишет на диск.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src/**/*.ts", "src/**/*.test.ts"],
+  "exclude": ["node_modules", "dist"]
+}

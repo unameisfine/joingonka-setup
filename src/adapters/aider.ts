@@ -27,13 +27,52 @@
  *   провайдера, причём префикс обязан совпасть с полем `litellm_provider`.
  *   Aider лимиты не навязывает, только сообщает о них, поэтому блок необязательный.
  *   Env-имена OPENAI_API_BASE / OPENAI_API_KEY — https://aider.chat/docs/llms/openai-compat.html.
+ *
+ * ★ Разовая сессия зависит от ПЛАТФОРМЫ (aiderSessionLines): `export` есть только в
+ *   POSIX-оболочках. Та же страница доки Aider для Windows предлагает `setx`
+ *   (сверено 21.09.2026), но он записывает переменную ПОСТОЯННО — это тот же
+ *   глобальный OPENAI_*, от которого мы предостерегаем на POSIX. Поэтому на Windows
+ *   печатаем `$env:` (PowerShell, только текущее окно), а про `setx` говорим прямо.
  */
 import { BASE_URL_OPENAI, AIDER_MODEL_PREFIX, modelLimits } from '../constants.js';
+import { currentPathContext, type PathContext } from '../core/paths.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Aider не пишет файл — путь всегда null. */
 function resolvePath(_scope: Scope): string | null {
   return null;
+}
+
+/**
+ * Разовая сессия Aider через переменные окружения — команды той оболочки, которая
+ * есть на платформе (см. шапку). Окружение приходит параметром (как у путей,
+ * core/paths.ts) — Windows-ветка проверяется тестом на любой машине.
+ *
+ * @param model имя модели УЖЕ с префиксом `openai/`.
+ */
+export function aiderSessionLines(
+  apiKey: string,
+  model: string,
+  ctx: PathContext = currentPathContext(),
+): string[] {
+  if (ctx.platform === 'win32') {
+    return [
+      'Or, just for a one-off session in the current PowerShell window (transient, not persisted):',
+      `  $env:OPENAI_API_BASE = "${BASE_URL_OPENAI}"`,
+      `  $env:OPENAI_API_KEY = "${apiKey}"`,
+      `  aider --model ${model}`,
+      'Avoid setx for these two — it makes OPENAI_* permanent for your whole account and would',
+      'hijack your other OpenAI-compatible tools.',
+    ];
+  }
+  return [
+    'Or, just for a one-off session in the current shell (transient, not persisted):',
+    `  export OPENAI_API_BASE=${BASE_URL_OPENAI}`,
+    `  export OPENAI_API_KEY=${apiKey}`,
+    `  aider --model ${model}`,
+    'Avoid putting that export in ~/.bashrc — a global OPENAI_* would hijack your',
+    'other OpenAI-compatible tools.',
+  ];
 }
 
 async function apply(input: ApplyInput): Promise<ApplyResult> {
@@ -60,12 +99,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       `  { "${model}": { "max_input_tokens": ${contextWindow}, "max_output_tokens": ${maxOutput},`,
       `      "max_tokens": ${maxOutput}, "litellm_provider": "openai", "mode": "chat" } }`,
       '',
-      'Or, just for a one-off session in the current shell (transient, not persisted):',
-      `  export OPENAI_API_BASE=${BASE_URL_OPENAI}`,
-      `  export OPENAI_API_KEY=${input.apiKey}`,
-      `  aider --model ${model}`,
-      'Avoid putting that export in ~/.bashrc — a global OPENAI_* would hijack your',
-      'other OpenAI-compatible tools.',
+      ...aiderSessionLines(input.apiKey, model),
     ],
   };
 }

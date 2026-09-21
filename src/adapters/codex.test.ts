@@ -69,7 +69,9 @@ describe('codexAdapter — метаданные', () => {
   it('is a writing TOML adapter for a coding agent', () => {
     expect(codexAdapter.id).toBe('codex');
     expect(codexAdapter.format).toBe('toml');
-    expect(codexAdapter.apiMode).toBe('openai');
+    // Codex ходит в шлюз только через Responses API — live-проверка идёт тем же
+    // маршрутом (было 'openai': «Verified» подтверждало /v1/chat/completions).
+    expect(codexAdapter.apiMode).toBe('responses');
     expect(codexAdapter.defaultModel).toBe(CODING_AGENT_DEFAULT_MODEL);
     // Проектный .codex/config.toml выбрать провайдера не может — Codex игнорирует там model_provider.
     expect(codexAdapter.supportsLocalScope).toBeFalsy();

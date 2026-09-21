@@ -35,7 +35,7 @@ import {
 import { tmpdir, platform } from 'node:os';
 import { join, dirname } from 'node:path';
 import { parse } from 'yaml';
-import { gooseAdapter, gooseConfigDir } from './goose.js';
+import { gooseAdapter, gooseConfigDir, gooseInlineKeyHint } from './goose.js';
 import type { ApplyInput } from './types.js';
 import {
   CODING_AGENT_DEFAULT_MODEL,
@@ -615,5 +615,29 @@ describe('gooseAdapter.apply — backups & idempotency', () => {
     expect(existsSync(join(root, 'config', 'config.yaml'))).toBe(true);
     expect(existsSync(join(root, 'config', 'secrets.yaml'))).toBe(true);
     expect(existsSync(configDir())).toBe(false);
+  });
+});
+
+describe('gooseInlineKeyHint — разовая сессия с ключом на разных платформах (0.5.0)', () => {
+  // `ИМЯ=значение команда` — синтаксис POSIX-оболочек; в PowerShell и cmd его нет.
+  const ctx = (platform: NodeJS.Platform) => ({ platform, env: {}, home: '/home/u' });
+
+  it('prints the POSIX inline form on Linux and macOS', () => {
+    for (const platform of ['linux', 'darwin'] as const) {
+      expect(gooseInlineKeyHint(ctx(platform))).toContain('CUSTOM_JOINGONKA_API_KEY=<your key> goose session');
+    }
+  });
+
+  it('prints a PowerShell form on Windows', () => {
+    const hint = gooseInlineKeyHint(ctx('win32'));
+    expect(hint).toContain('$env:CUSTOM_JOINGONKA_API_KEY = "<your key>"; goose session');
+    expect(hint).toMatch(/PowerShell/);
+    expect(hint).not.toContain('CUSTOM_JOINGONKA_API_KEY=<your key> goose session');
+  });
+
+  it('never repeats the real key', () => {
+    for (const platform of ['linux', 'win32'] as const) {
+      expect(gooseInlineKeyHint(ctx(platform))).not.toContain('jg-');
+    }
   });
 });

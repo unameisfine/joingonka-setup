@@ -46,12 +46,13 @@ import {
   BASE_URL_OPENAI,
   CODING_AGENT_DEFAULT_MODEL,
   OPENCLAW_CONTEXT_WINDOW,
-  OPENCLAW_MODELS,
   OPENCODE_NPM,
   type OpenClawModelSpec,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
+import { catalogFor, catalogIds } from '../core/catalog.js';
 import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { asObject } from '../core/json-shape.js';
 import { isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
 import {
   currentPathContext,
@@ -77,16 +78,6 @@ const OPENCODE_SCHEMA_URL = 'https://opencode.ai/config.json';
 
 /** Глобальные конфиги по УБЫВАНИЮ приоритета (он же порядок выбора файла для записи). */
 const CONFIG_FILE_NAMES = ['mimocode.jsonc', 'mimocode.json', 'config.json'] as const;
-
-/** Актуальные id моделей каталога — для сброса устаревшего дефолта. */
-const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
-
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
-}
 
 /**
  * Пути MiMo Code (см. шапку). Окружение приходит параметром — так ветки
@@ -126,25 +117,6 @@ export function mimoCodePaths(ctx: PathContext = currentPathContext()): {
 /** Путь к конфигу; окружение читается В МОМЕНТ ВЫЗОВА (тесты подменяют env). */
 function resolvePath(_scope: Scope): string {
   return mimoCodePaths().config;
-}
-
-/**
- * Каталог установки: актуальные модели сети плюс явно запрошенная модель вне
- * каталога. Сеть может получить модель раньше, чем выйдет новая версия
- * установщика; дефолт, которого нет в каталоге провайдера, инструмент молча
- * отбрасывает («configured default model missing from registry»). Лимиты для
- * незнакомой модели — осторожные: окно по умолчанию и наименьший потолок ответа.
- */
-function catalogFor(input: ApplyInput): OpenClawModelSpec[] {
-  const specs = [...OPENCLAW_MODELS];
-  if (input.modelExplicit && !CANONICAL_IDS.includes(input.model)) {
-    specs.push({
-      id: input.model,
-      name: input.model,
-      maxTokens: Math.min(...OPENCLAW_MODELS.map((m) => m.maxTokens)),
-    });
-  }
-  return specs;
 }
 
 /**
@@ -262,7 +234,10 @@ function planConfig(existing: JsonObject, inherited: string | undefined, input: 
   const own = existing.model;
   const current = typeof own === 'string' && own.trim() !== '' ? own : inherited;
   const ourDefault = `${PROVIDER_ID}/${CODING_AGENT_DEFAULT_MODEL}`;
-  const staleDefault = isStaleProviderModelRef(current, PROVIDER_ID, CANONICAL_IDS);
+  // Живые — модели каталога ЭТОЙ установки: явно запрошенную модель вне каталога мы
+  // сами только что записали, «ушедшей» она не считается.
+  const liveIds = catalogIds(input);
+  const staleDefault = isStaleProviderModelRef(current, PROVIDER_ID, liveIds);
 
   let model: string;
   if (input.modelExplicit) {
@@ -278,7 +253,7 @@ function planConfig(existing: JsonObject, inherited: string | undefined, input: 
   // Наши убранные модели ВНЕ каталога: small_model, модели агентов и команд
   // (формат у форка тот же, что у opencode — config.ts, agent.ts, command.ts).
   const replacement = input.modelExplicit ? `${PROVIDER_ID}/${input.model}` : ourDefault;
-  const staleEdits = opencodeStaleRefEdits(existing, PROVIDER_ID, CANONICAL_IDS, replacement);
+  const staleEdits = opencodeStaleRefEdits(existing, PROVIDER_ID, liveIds, replacement);
   edits.push(...staleEdits);
 
   return { edits, model, staleRefs: staleEdits.length + (staleDefault ? 1 : 0), notes };

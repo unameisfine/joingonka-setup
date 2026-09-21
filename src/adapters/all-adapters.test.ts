@@ -18,9 +18,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir, platform } from 'node:os';
 import { join } from 'node:path';
+import { parse as parseJsonc } from 'jsonc-parser';
+import { parse as parseToml } from 'smol-toml';
+import { parse as parseYaml } from 'yaml';
 import { adapters, toolIds } from './registry.js';
 import { applyJsonEdits } from '../core/json-config.js';
-import { CODING_AGENT_DEFAULT_MODEL, DEFAULT_MODEL } from '../constants.js';
+import { CODING_AGENT_DEFAULT_MODEL, DEFAULT_MODEL, OPENCLAW_MODELS } from '../constants.js';
 
 // Мокаем ровно тот модуль, который импортируют адаптеры: оригинал остаётся
 // рабочим, добавляется только запись аргументов.
@@ -223,4 +226,160 @@ describe('default model: what is verified is what is written', () => {
       expect(adapters[id as (typeof writers)[number]].defaultModel, id).toBeUndefined();
     }
   });
+});
+
+describe('model catalog: an explicit model from outside the installer catalog', () => {
+  // ★ `--model вендор/новая-модель` разбор моделей пропускает с предупреждением: сеть
+  // может получить модель раньше новой версии установщика. Но у инструмента с
+  // каталогом провайдера модель, которой в каталоге НЕТ, не находится вовсе. Новые
+  // адаптеры 0.5.0 добавляли её в каталог, старые (opencode, kilo, openclaw, pi,
+  // zed) — нет: дефолт указывал на модель, которой инструмент не знает.
+  const NEW_MODEL = 'newvendor/Model-X';
+  const NETWORK_IDS = OPENCLAW_MODELS.map((m) => m.id);
+
+  const text = (...segments: string[]) => readFileSync(join(home, ...segments), 'utf-8');
+  const json = (...segments: string[]) => parseJsonc(text(...segments));
+  const yaml = (...segments: string[]) => parseYaml(text(...segments));
+  const named = (list: Array<Record<string, string>>, key: string) => list.map((entry) => entry[key]!);
+
+  /** Где у инструмента каталог моделей нашего провайдера — и какие id в нём лежат. */
+  const catalogOf: Record<string, () => string[]> = {
+    openclaw: () => named(json('.openclaw', 'openclaw.json').models.providers.gonka.models, 'id'),
+    opencode: () => Object.keys(json('.config', 'opencode', 'opencode.json').provider.joingonka.models),
+    kilo: () => Object.keys(json('.config', 'kilo', 'kilo.jsonc').provider.joingonka.models),
+    pi: () => named(json('.pi', 'agent', 'models.json').providers.joingonka.models, 'id'),
+    zed: () =>
+      named(
+        json('.config', 'zed', 'settings.json').language_models.openai_compatible.joingonka
+          .available_models,
+        'name',
+      ),
+    omp: () => named(yaml('.omp', 'agent', 'models.yml').providers.joingonka.models, 'id'),
+    'minimax-code': () => Object.keys(yaml('.minimax', 'config.yaml').custom_provider.joingonka.models),
+    goose: () =>
+      named(json('.config', 'goose', 'custom_providers', 'custom_joingonka.json').models, 'name'),
+    'mimo-code': () =>
+      Object.keys(json('.config', 'mimocode', 'mimocode.jsonc').provider.joingonka.models),
+    'qwen-code': () => named(json('.qwen', 'settings.json').modelProviders.openai, 'id'),
+    droid: () => named(json('.factory', 'settings.json').customModels, 'model'),
+    crush: () => named(json('.config', 'crush', 'crush.json').providers.joingonka.models, 'id'),
+    'kimi-code': () =>
+      named(
+        Object.values(
+          (parseToml(text('.kimi-code', 'config.toml')) as { models: Record<string, Record<string, string>> })
+            .models,
+        ),
+        'model',
+      ),
+  };
+
+  // Каталога провайдера нет: модель у них — одно значение (env, `model = …`).
+  const NO_CATALOG = ['claude-code', 'codex', 'hermes'];
+
+  it('classifies every writing adapter: either it has a catalog checked here, or it has none', () => {
+    expect([...Object.keys(catalogOf), ...NO_CATALOG].sort()).toEqual([...writers].sort());
+  });
+
+  const explicit = (id: (typeof writers)[number]) => ({
+    ...defaultInput(id),
+    model: NEW_MODEL,
+    modelExplicit: true,
+  });
+
+  it.each(Object.keys(catalogOf))('%s: puts it into the provider catalog, next to the network models', async (id) => {
+    await adapters[id as (typeof writers)[number]].apply(explicit(id as (typeof writers)[number]));
+
+    expect(catalogOf[id]!()).toEqual([...NETWORK_IDS, NEW_MODEL]);
+  });
+
+  it.each(Object.keys(catalogOf))('%s: running the same --model again changes nothing and cleans up nothing', async (id) => {
+    const adapter = adapters[id as (typeof writers)[number]];
+    await adapter.apply(explicit(id as (typeof writers)[number]));
+    const first = withoutBackups(snapshot());
+
+    const again = await adapter.apply(explicit(id as (typeof writers)[number]));
+
+    expect(withoutBackups(snapshot())).toEqual(first);
+    // Модель запрошена явно и лежит в каталоге — «ушедшей» её называть нельзя.
+    expect(again.messages.join('\n')).not.toMatch(/no longer serve/i);
+  });
+
+  it.each(Object.keys(catalogOf))('%s: a later run WITHOUT --model drops it from the catalog again', async (id) => {
+    // Осознанная граница (core/catalog.ts): без флага каталог — только модели сети,
+    // и прежняя модель вне каталога считается ушедшей. Об этом предупреждает
+    // core/models.ts и говорит README.
+    const adapter = adapters[id as (typeof writers)[number]];
+    await adapter.apply(explicit(id as (typeof writers)[number]));
+
+    await adapter.apply(defaultInput(id as (typeof writers)[number]));
+
+    expect(catalogOf[id]!()).toEqual(NETWORK_IDS);
+  });
+});
+
+describe('live prices: a price already in the config is not overwritten by the built-in constant', () => {
+  // ★ Адаптеры с `wantsPricing` получают живую цену из /api/pricing; при недоступном
+  // шлюзе оркестратор передаёт `null`. Раньше в этом случае в конфиг уходила
+  // константа-фолбэк — ПОВЕРХ живой цены прошлого запуска. Константа — только для
+  // новой записи модели.
+  const pricedWriters = writers.filter((id) => adapters[id].wantsPricing === true);
+  const LIVE = { input: 0.004321, output: 0.012963 };
+
+  it('covers every adapter that writes prices', () => {
+    expect([...pricedWriters].sort()).toEqual(['crush', 'omp', 'openclaw', 'pi']);
+  });
+
+  it.each(pricedWriters)('%s: a second run without a live price leaves the files byte-identical', async (id) => {
+    await adapters[id].apply({ ...defaultInput(id), pricing: LIVE });
+    const first = withoutBackups(snapshot());
+    expect([...first.values()].join('\n')).toContain('0.004321');
+
+    await adapters[id].apply({ ...defaultInput(id), pricing: null });
+
+    expect(withoutBackups(snapshot())).toEqual(first);
+  });
+
+  it.each(pricedWriters)('%s: the same holds when the pricing field is absent altogether', async (id) => {
+    await adapters[id].apply({ ...defaultInput(id), pricing: LIVE });
+    const first = withoutBackups(snapshot());
+
+    await adapters[id].apply(defaultInput(id));
+
+    expect(withoutBackups(snapshot())).toEqual(first);
+  });
+
+  it.each(pricedWriters)('%s: a NEW live price replaces the recorded one', async (id) => {
+    await adapters[id].apply({ ...defaultInput(id), pricing: LIVE });
+    await adapters[id].apply({ ...defaultInput(id), pricing: { input: 0.005555, output: 0.016665 } });
+
+    const text = [...withoutBackups(snapshot()).values()].join('\n');
+    expect(text).toContain('0.005555');
+    expect(text).not.toContain('0.004321');
+  });
+
+  it.each(pricedWriters)('%s: a fresh install without a live price gets the built-in constant', async (id) => {
+    await adapters[id].apply({ ...defaultInput(id), pricing: null });
+
+    const text = [...withoutBackups(snapshot()).values()].join('\n');
+    expect(text).toContain('0.0062');
+    expect(text).toContain('0.0185');
+  });
+
+  it.each(pricedWriters)(
+    '%s: a model that joins the catalog later gets the constant, its neighbours keep their price',
+    async (id) => {
+      await adapters[id].apply({ ...defaultInput(id), pricing: LIVE });
+
+      await adapters[id].apply({
+        ...defaultInput(id),
+        model: 'newvendor/Model-X',
+        modelExplicit: true,
+        pricing: null,
+      });
+
+      const text = [...withoutBackups(snapshot()).values()].join('\n');
+      expect(text).toContain('0.004321'); // прежние модели — с записанной ценой
+      expect(text).toContain('0.0062'); // новая запись — с константой
+    },
+  );
 });

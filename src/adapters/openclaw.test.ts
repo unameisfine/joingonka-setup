@@ -644,6 +644,45 @@ describe('openclawAdapter.apply — живая цена (0.4.5)', () => {
   it('asks the orchestrator for prices', () => {
     expect(openclawAdapter.wantsPricing).toBe(true);
   });
+
+  // ★ Путь обновления с 0.1.0–0.4.4: в конфиге стоит прежняя константа 0.07 / 0.1
+  // (завышена в 5–11 раз). Она живой ценой не была — при недоступном шлюзе её
+  // заменяет исправленная константа, а не «сохраняет как уже записанную».
+  it('replaces the retired 0.07 / 0.1 constant even when the gateway cannot be reached', async () => {
+    const dir = join(tmpDir, '.openclaw');
+    mkdirSync(dir, { recursive: true });
+    const retired = { input: 0.07, output: 0.1, cacheRead: 0.07, cacheWrite: 0.07 };
+    writeFileSync(
+      join(dir, 'openclaw.json'),
+      JSON.stringify({
+        models: { providers: { gonka: { models: [{ id: DEFAULT_MODEL, cost: retired }] } } },
+      }),
+    );
+
+    await openclawAdapter.apply({ ...input(), pricing: null });
+
+    const models = readConfig().models.providers.gonka.models as Array<Record<string, any>>;
+    for (const model of models) {
+      expect(model.cost).toEqual({ input: 0.0062, output: 0.0185, cacheRead: 0.0062, cacheWrite: 0.0062 });
+    }
+  });
+
+  it('keeps a price the user tuned by hand when there is no live one', async () => {
+    const dir = join(tmpDir, '.openclaw');
+    mkdirSync(dir, { recursive: true });
+    const tuned = { input: 0.005, output: 0.015, cacheRead: 0.001, cacheWrite: 0.002 };
+    writeFileSync(
+      join(dir, 'openclaw.json'),
+      JSON.stringify({
+        models: { providers: { gonka: { models: [{ id: DEFAULT_MODEL, cost: tuned }] } } },
+      }),
+    );
+
+    await openclawAdapter.apply({ ...input(), pricing: null });
+
+    const models = readConfig().models.providers.gonka.models as Array<Record<string, any>>;
+    expect(models.find((m) => m.id === DEFAULT_MODEL)!.cost).toEqual(tuned);
+  });
 });
 
 describe('openclawAdapter.apply — неожиданная форма узла (0.4.5)', () => {

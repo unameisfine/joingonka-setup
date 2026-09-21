@@ -48,6 +48,18 @@ describe('canonicalModel', () => {
     expect(resolved.warning).toMatch(/not in this installer/i);
   });
 
+  // ★ Модель вне каталога адаптер записывает и в каталог провайдера (core/catalog.ts),
+  // но только в запуске с явным `--model`. Следующий запуск БЕЗ флага сочтёт её
+  // ушедшей из сети и вернёт дефолт — человек обязан узнать об этом заранее, а не
+  // обнаружить через неделю «слетевшую» модель.
+  it('warns that a later run without --model will reset a model from outside the catalog', () => {
+    const { warning } = canonicalModel('newvendor/Model-X');
+    expect(warning).toContain('--model newvendor/Model-X');
+    expect(warning).toMatch(/without it.*(retired|default)/is);
+    // Лимиты такой модели — осторожные, а не измеренные: об этом тоже сказано.
+    expect(warning).toMatch(/conservative limits/i);
+  });
+
   it('never reports a warning for catalog models', () => {
     expect(canonicalModel('deepseek').warning).toBeUndefined();
   });

@@ -79,12 +79,14 @@ import {
   type OpenClawModelSpec,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
+import { catalogFor } from '../core/catalog.js';
 import {
   readJsonConfig,
   applyJsonEdits,
   type JsonConfigDoc,
   type JsonEdit,
 } from '../core/json-config.js';
+import { asObject, asText, entriesById } from '../core/json-shape.js';
 import type { JsonObject } from '../core/merge.js';
 import {
   currentPathContext,
@@ -109,18 +111,6 @@ const SCHEMA_URL = 'https://charm.land/crush.json';
 
 /** Актуальные id моделей каталога — для сброса устаревшего выбора. */
 const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
-
-/** Безопасный доступ к вложенному plain-объекту (undefined, если не объект). */
-function asObject(value: unknown): JsonObject | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : undefined;
-}
-
-/** Непустая строка без пробелов по краям либо undefined. */
-function asText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
-}
 
 /**
  * Пути Crush — как их считает load.go. `config` — файл, который пишем; `state` и
@@ -164,23 +154,6 @@ function resolvePath(_scope: Scope): string {
 }
 
 /**
- * Каталог установки: актуальные модели сети плюс явно запрошенная модель вне
- * каталога (выбор модели, которой нет у провайдера, Crush молча заменяет своим
- * дефолтом). Лимиты незнакомой модели — осторожные.
- */
-function catalogFor(input: ApplyInput): OpenClawModelSpec[] {
-  const specs = [...OPENCLAW_MODELS];
-  if (input.modelExplicit && !CANONICAL_IDS.includes(input.model)) {
-    specs.push({
-      id: input.model,
-      name: input.model,
-      maxTokens: Math.min(...OPENCLAW_MODELS.map((m) => m.maxTokens)),
-    });
-  }
-  return specs;
-}
-
-/**
  * Справочная цена модели ($/1M): живая, если оркестратор её передал, иначе
  * фолбэк. Берём через `openclawModelEntry`, чтобы числа жили в одном месте
  * (constants.ts), а не дублировались здесь.
@@ -188,20 +161,38 @@ function catalogFor(input: ApplyInput): OpenClawModelSpec[] {
 function referenceCost(
   spec: OpenClawModelSpec,
   pricing: LivePricing | null | undefined,
+  recorded: JsonObject | undefined,
 ): { input: number; output: number; cacheRead: number; cacheWrite: number } {
-  const cost = asObject(openclawModelEntry(spec, priceFor(pricing, spec.id)).cost) ?? {};
-  const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+  // Цена, уже записанная у этой модели в crush.json, — в форме общего блока `cost`:
+  // когда живой цены нет, она остаётся как есть, а константа идёт только новой
+  // записи (правило и его причина — constants.ts, modelCost).
+  const recordedCost = recorded && {
+    input: recorded.cost_per_1m_in,
+    output: recorded.cost_per_1m_out,
+    cacheWrite: recorded.cost_per_1m_in_cached,
+    cacheRead: recorded.cost_per_1m_out_cached,
+  };
+  const cost =
+    asObject(openclawModelEntry(spec, priceFor(pricing, spec.id), recordedCost).cost) ?? {};
+  const num = (value: unknown, fallback: number) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  const input = num(cost.input, 0);
   return {
-    input: num(cost.input),
-    output: num(cost.output),
-    cacheRead: num(cost.cacheRead),
-    cacheWrite: num(cost.cacheWrite),
+    input,
+    output: num(cost.output, 0),
+    // Кеш без своей цены приравнен ко входу — как в общем блоке `cost`.
+    cacheRead: num(cost.cacheRead, input),
+    cacheWrite: num(cost.cacheWrite, input),
   };
 }
 
 /** Запись модели — все поля, которые schema.json помечает обязательными. */
-function modelEntry(spec: OpenClawModelSpec, pricing: LivePricing | null | undefined): JsonObject {
-  const cost = referenceCost(spec, pricing);
+function modelEntry(
+  spec: OpenClawModelSpec,
+  pricing: LivePricing | null | undefined,
+  recorded: JsonObject | undefined,
+): JsonObject {
+  const cost = referenceCost(spec, pricing, recorded);
   return {
     id: spec.id,
     name: spec.name,
@@ -306,6 +297,8 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
   const provider = ['providers', PROVIDER_ID];
   const edits: JsonEdit[] = [];
   const notes: string[] = [];
+  // Наши модели, уже записанные в файле: их цена переживает запуск без живой цены.
+  const recordedModels = entriesById(asObject(ownProvider)?.models);
 
   if (typeof doc.value.$schema !== 'string') {
     edits.push({ path: ['$schema'], value: SCHEMA_URL });
@@ -320,7 +313,9 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     // Каталог — целиком актуальным набором: ушедшие из сети модели исчезают.
     {
       path: [...provider, 'models'],
-      value: catalogFor(input).map((spec) => modelEntry(spec, input.pricing)),
+      value: catalogFor(input).map((spec) =>
+        modelEntry(spec, input.pricing, recordedModels.get(spec.id)),
+      ),
     },
   );
   if (asObject(ownProvider)?.disable === true) {

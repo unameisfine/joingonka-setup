@@ -65,8 +65,27 @@ Ten more tools — 25 in total — and a round of fixes found while integrating 
 - **The live check verifies the model that was written.** For OpenClaw, opencode and
   Kilo Code the config got DeepSeek V4 Flash while the check was made with MiniMax
   M2.7, so `✓ Verified` could vouch for a model the tool would not use.
+- **The live check speaks the tool's own protocol.** Codex CLI only talks to the
+  Responses API, so `--tool codex` is now verified with a minimal stateless request
+  to `/v1/responses` instead of `/v1/chat/completions`. The outcome is classified the
+  same way: a rejected key, model or route fails the run, a busy network or an empty
+  balance does not.
+- **A model from outside the installer's catalog reaches the tool's model catalog
+  everywhere.** `--model vendor/new-model` is accepted with a warning, because the
+  network may get a model before the installer learns about it. The tools added in
+  0.5.0 also put such a model into the provider's catalog; opencode, Kilo Code,
+  OpenClaw, Pi, Zed, omp, MiniMax Code and Goose did not, so the default pointed at a
+  model the tool could not find. All of them now add it, with conservative limits
+  (200K context, 8,192 output). Unchanged, and now said in the warning: a later run
+  *without* `--model` treats a model outside the catalog as retired and goes back to
+  the default — keep passing the flag.
 - **Zed on Windows** gets PowerShell instructions for the key (`$env:` for the
   current window, `setx` for a permanent variable) instead of a POSIX `export`.
+  **Aider** and **Goose** print their one-session hints for PowerShell on Windows as
+  well (Aider's says why `setx`, which Aider's own docs suggest, is a bad idea for
+  `OPENAI_*`). The Windows locations of **omp** (`%USERPROFILE%\.omp\agent`) and
+  **MiniMax Code** (`%USERPROFILE%\.minimax`) were checked against the tools'
+  sources and are covered by tests.
 - **Refusals always name the file.** Several adapters reported "The config file: …"
   without a path; the path is now required wherever a config is edited.
 - **Hermes:** long lines you wrote yourself (a long prompt, a URL) are no longer
@@ -80,6 +99,23 @@ Ten more tools — 25 in total — and a round of fixes found while integrating 
   down in May 2026, is last and marked as discontinued, and its notice now points at
   `--tool zoo`.
 - `CHANGELOG.md` ships in the npm package.
+- `npm run typecheck` checks the types of the sources **and** of the tests (the build
+  excludes tests, and the test runner does not check types); `npm publish` runs it
+  before the build.
+
+### Fixed
+
+- **A live price is no longer overwritten by the built-in one.** OpenClaw, Pi, omp and
+  Crush get per-token prices from the gateway at install time. When the gateway did
+  not answer within three seconds, a re-run replaced the live price already in the
+  config with the rougher built-in constant — so two runs in a row could leave
+  different files. A price that is already recorded for a model is now left exactly
+  as it is; the built-in value is used only for a model entry that is new. The one
+  exception is the `0.07` / `0.1` constant written by versions up to 0.4.4: it was
+  5–11 times too high and is still replaced.
+- Running the installer twice with the same `--model` from outside the catalog no
+  longer reports that it "cleaned up references to models that are no longer
+  served" — the model had just been written by the installer itself.
 
 ## [0.4.5] - 2026-09-21
 

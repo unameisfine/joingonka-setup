@@ -76,10 +76,11 @@ import {
   BASE_URL_OPENAI,
   CODING_AGENT_DEFAULT_MODEL,
   OPENCLAW_CONTEXT_WINDOW,
-  OPENCLAW_MODELS,
 } from '../constants.js';
+import { catalogFor, catalogIds } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
 import { applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { nonEmptyString } from '../core/json-shape.js';
 import { currentPathContext, envValue, pathApi, type PathContext } from '../core/paths.js';
 import { ensureMapAt, loadYamlMap, renderYaml, YAML_REFUSAL_HINT } from '../core/yaml-config.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
@@ -98,9 +99,6 @@ const GOOSE_BASE_URL = `${BASE_URL_OPENAI}/chat/completions`;
 
 /** Права на файлы с секретом (и на файл провайдера, куда дописывают заголовки-токены). */
 const OWNER_ONLY_MODE = 0o600;
-
-/** Актуальные id моделей каталога — для сброса устаревшего дефолта. */
-const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
 
 /** Концовка отказа для файла провайдера (JSON) — та же, что у YAML-файлов. */
 const NOTHING_WRITTEN = YAML_REFUSAL_HINT;
@@ -123,6 +121,18 @@ export function gooseConfigDir(ctx: PathContext = currentPathContext()): string 
   // etcetera принимает XDG_CONFIG_HOME, только если путь абсолютный.
   const xdg = envValue(ctx, 'XDG_CONFIG_HOME');
   return p.join(xdg && p.isAbsolute(xdg) ? xdg : p.join(ctx.home, '.config'), 'goose');
+}
+
+/**
+ * Как передать ключ Goose на ОДНУ сессию, не сохраняя его нигде. `ИМЯ=значение
+ * команда` — синтаксис POSIX-оболочек; в PowerShell и cmd его нет, там переменная
+ * задаётся отдельной командой и живёт до закрытия окна. Значение ключа не
+ * повторяем. Окружение приходит параметром — Windows-ветка проверяется тестом.
+ */
+export function gooseInlineKeyHint(ctx: PathContext = currentPathContext()): string {
+  return ctx.platform === 'win32'
+    ? `For a single session you can set it in PowerShell instead: $env:${GOOSE_API_KEY_NAME} = "<your key>"; goose session`
+    : `For a single session you can pass it inline instead: ${GOOSE_API_KEY_NAME}=<your key> goose session`;
 }
 
 /** Пути трёх файлов; окружение читается В МОМЕНТ ВЫЗОВА (тесты подменяют HOME/env). */
@@ -164,11 +174,6 @@ function loadProviderFile(raw: string | null, filePath: string): { text: string;
   return { text: raw, value: parsed as Record<string, unknown> };
 }
 
-/** Непустая строка либо undefined. */
-function str(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
-}
-
 /** setIn, который сообщает, изменилось ли значение (лишний раз файл не переписываем). */
 function setIfChanged(doc: Document, path: string[], value: string | boolean): boolean {
   if (doc.getIn(path) === value) return false;
@@ -177,8 +182,10 @@ function setIfChanged(doc: Document, path: string[], value: string | boolean): b
 }
 
 /** Точечные правки файла провайдера; каталог моделей — целиком актуальным набором. */
-function providerEdits(commandAuth: boolean): JsonEdit[] {
-  const models = OPENCLAW_MODELS.map((spec) => ({
+function providerEdits(commandAuth: boolean, input: ApplyInput): JsonEdit[] {
+  // Модели сети плюс явно запрошенная модель вне каталога (core/catalog.ts): модель,
+  // которой нет в списке провайдера, Goose не предложит и по умолчанию не возьмёт.
+  const models = catalogFor(input).map((spec) => ({
     name: spec.id,
     context_limit: spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW,
   }));
@@ -219,10 +226,10 @@ function editDefault(doc: Document, filePath: string, input: ApplyInput): { chan
 
   // Порядок чтения — как у Goose (providers.rs): active_provider, затем плоский ключ;
   // модель — из записи провайдера, затем плоский ключ.
-  const provider = str(doc.getIn(['active_provider'])) ?? str(doc.getIn(['GOOSE_PROVIDER']));
+  const provider = nonEmptyString(doc.getIn(['active_provider'])) ?? nonEmptyString(doc.getIn(['GOOSE_PROVIDER']));
   const model =
-    (provider ? str(doc.getIn(['providers', provider, 'model'])) : undefined) ??
-    str(doc.getIn(['GOOSE_MODEL']));
+    (provider ? nonEmptyString(doc.getIn(['providers', provider, 'model'])) : undefined) ??
+    nonEmptyString(doc.getIn(['GOOSE_MODEL']));
 
   if (!input.modelExplicit && provider) {
     if (provider !== GOOSE_PROVIDER_ID) {
@@ -234,7 +241,7 @@ function editDefault(doc: Document, filePath: string, input: ApplyInput): { chan
         ],
       };
     }
-    if (model && CANONICAL_IDS.includes(model)) {
+    if (model && catalogIds(input).includes(model)) {
       return {
         changed: false,
         lines: [`Kept your current default model (${model}). Switch with --model deepseek|glm|minimax`],
@@ -291,7 +298,11 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
   const explicitlyDisabled = keyringDisabled(configDoc);
   const fileStore = !commandAuth && (explicitlyDisabled || secretsRaw != null);
 
-  const providerText = applyJsonEdits(providerDoc.text, providerEdits(commandAuth), paths.provider);
+  const providerText = applyJsonEdits(
+    providerDoc.text,
+    providerEdits(commandAuth, input),
+    paths.provider,
+  );
   const defaults = editDefault(configDoc, paths.config, input);
   const configText = defaults.changed ? renderYaml(configDoc, paths.config) : null;
   const secretsText =
@@ -350,7 +361,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       `installer cannot write, and its provider file holds only the secret's NAME (${GOOSE_API_KEY_NAME}).`,
       'Store the key once:',
       ...storeInKeyring,
-      `For a single session you can pass it inline instead: ${GOOSE_API_KEY_NAME}=<your key> goose session`,
+      gooseInlineKeyHint(),
     ];
   }
 

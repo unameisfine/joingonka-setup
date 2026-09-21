@@ -50,21 +50,21 @@
  * сообщениях просим закрыть mcode на время установки.
  *
  * Путь один для обоих scope. Каталог данных: MINIMAX_DATA_DIR, затем
- * MAVIS_DATA_DIR (оба — непустые), иначе ~/.minimax. Именованный профиль mcode
+ * MAVIS_DATA_DIR (оба — непустые), иначе ~/.minimax (на Windows —
+ * C:\Users\<имя>\.minimax, см. minimaxCodeConfigPath). Именованный профиль mcode
  * (`--profile x` → ~/.minimax-x) публичной env-переменной не имеет — для него
  * установщик запускают с MINIMAX_DATA_DIR=~/.minimax-x.
  */
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import type { Document } from 'yaml';
 import {
   BASE_URL_OPENAI,
   CODING_AGENT_DEFAULT_MODEL,
   OPENCLAW_CONTEXT_WINDOW,
-  OPENCLAW_MODELS,
   type OpenClawModelSpec,
 } from '../constants.js';
+import { catalogFor, catalogIds } from '../core/catalog.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
+import { currentPathContext, envValue, pathApi, type PathContext } from '../core/paths.js';
 import { staleRefsNote } from '../core/stale-refs.js';
 import { ensureMapAt, loadYamlMap, renderYaml } from '../core/yaml-config.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
@@ -87,21 +87,27 @@ const PAIRED_DEFAULT_KEYS = ['defaultModelVariant', 'defaultModelThinking', 'def
 /** Права на config.yaml — только владелец: внутри литеральный ключ (mcode требует того же). */
 const OWNER_ONLY_MODE = 0o600;
 
-/** Актуальные id моделей каталога — для сброса устаревшего дефолта. */
-const CANONICAL_IDS = OPENCLAW_MODELS.map((m) => m.id);
-
 /**
- * Каталог данных mcode (packages/config/src/config.ts, getExplicitPublicDataDirEnv):
- * непустой MINIMAX_DATA_DIR, затем непустой MAVIS_DATA_DIR, иначе ~/.minimax.
- * homedir()/env читаются В МОМЕНТ ВЫЗОВА (тесты подменяют HOME/env).
+ * Путь к config.yaml. Каталог данных mcode (packages/config/src/config.ts —
+ * getExplicitPublicDataDirEnv, getDataDir; packages/config/src/data-dir.ts —
+ * getPrimaryDataDirPath; сверено 21.09.2026, main ae65651d): непустой
+ * MINIMAX_DATA_DIR, затем непустой MAVIS_DATA_DIR (оба берутся как есть, без
+ * path.resolve), иначе path.join(os.homedir(), '.minimax') — на ВСЕХ платформах,
+ * особого случая для Windows у mcode нет.
+ *
+ * Окружение приходит параметром — так Windows-ветка проверяется тестом на любой
+ * машине (до второй части 0.5.0 путь считался через node:path/homedir напрямую).
  */
-function dataDir(): string {
-  const fromEnv = process.env.MINIMAX_DATA_DIR?.trim() || process.env.MAVIS_DATA_DIR?.trim();
-  return fromEnv ? fromEnv : join(homedir(), '.minimax');
+export function minimaxCodeConfigPath(ctx: PathContext = currentPathContext()): string {
+  const { join } = pathApi(ctx);
+  const dataDir =
+    envValue(ctx, 'MINIMAX_DATA_DIR') ?? envValue(ctx, 'MAVIS_DATA_DIR') ?? join(ctx.home, '.minimax');
+  return join(dataDir, 'config.yaml');
 }
 
+/** Окружение читается В МОМЕНТ ВЫЗОВА (тесты подменяют HOME/env). */
 function resolvePath(_scope: Scope): string {
-  return join(dataDir(), 'config.yaml');
+  return minimaxCodeConfigPath();
 }
 
 /**
@@ -117,7 +123,7 @@ function modelEntry(spec: OpenClawModelSpec): Record<string, unknown> {
 }
 
 /** Правки ветки custom_provider: наш провайдер; каталог моделей — целиком заново. */
-function editProvider(doc: Document, filePath: string, apiKey: string): void {
+function editProvider(doc: Document, filePath: string, input: ApplyInput): void {
   ensureMapAt(doc, ['custom_provider'], filePath);
   // custom_provider.joingonka и его options — НАШИ ключи: мусор заменяем.
   const provider = ['custom_provider', MCODE_PROVIDER_KEY];
@@ -130,12 +136,14 @@ function editProvider(doc: Document, filePath: string, apiKey: string): void {
   doc.setIn([...provider, 'enabled'], true);
   doc.setIn([...provider, 'api'], MCODE_API_FORMAT);
   // Литеральный ключ jg-... — так же хранит ключ и сам mcode. Файл 0o600.
-  doc.setIn([...provider, 'options', 'apiKey'], apiKey);
+  doc.setIn([...provider, 'options', 'apiKey'], input.apiKey);
   doc.setIn([...provider, 'options', 'baseURL'], BASE_URL_OPENAI);
   doc.setIn([...provider, 'options', 'authMode'], 'api-key');
 
   const models: Record<string, unknown> = {};
-  for (const spec of OPENCLAW_MODELS) models[spec.id] = modelEntry(spec);
+  // Явно запрошенная модель вне каталога тоже попадает в него (core/catalog.ts):
+  // defaultModel, которого нет среди моделей провайдера, mcode не находит.
+  for (const spec of catalogFor(input)) models[spec.id] = modelEntry(spec);
   doc.setIn([...provider, 'models'], doc.createNode(models));
 }
 
@@ -145,13 +153,14 @@ function isOurs(ref: unknown): ref is string {
 }
 
 /**
- * Наша ссылка, модели которой в каталоге больше нет (чужие и актуальные — false).
- * У ссылки бывает хвост `#variant` (docs/tui-capabilities.md) — его отбрасываем.
+ * Наша ссылка, модели которой нет в каталоге ЭТОЙ установки (чужие и актуальные —
+ * false; `liveIds` — core/catalog.ts). У ссылки бывает хвост `#variant`
+ * (docs/tui-capabilities.md) — его отбрасываем.
  */
-function isOurStale(ref: unknown): ref is string {
+function isOurStale(ref: unknown, liveIds: readonly string[]): ref is string {
   if (!isOurs(ref)) return false;
   const modelId = ref.slice(MCODE_PROVIDER_ID.length + 1).replace(/#[^#]*$/, '');
-  return !CANONICAL_IDS.includes(modelId);
+  return !liveIds.includes(modelId);
 }
 
 /**
@@ -168,15 +177,16 @@ function isOurStale(ref: unknown): ref is string {
 function editDefaultModel(doc: Document, input: ApplyInput): { line: string; staleRefs: number } {
   const current = doc.getIn(['defaultModel']);
   const target = `${MCODE_PROVIDER_ID}/${input.model}`;
-  let staleRefs = isOurStale(current) ? 1 : 0;
+  const liveIds = catalogIds(input);
+  let staleRefs = isOurStale(current, liveIds) ? 1 : 0;
 
-  if (isOurStale(doc.getIn(['defaultLightModel']))) {
+  if (isOurStale(doc.getIn(['defaultLightModel']), liveIds)) {
     doc.setIn(['defaultLightModel'], target);
     staleRefs += 1;
   }
 
   const hasCurrent = typeof current === 'string' && current.trim() !== '';
-  if (!input.modelExplicit && hasCurrent && !isOurStale(current)) {
+  if (!input.modelExplicit && hasCurrent && !isOurStale(current, liveIds)) {
     return {
       staleRefs,
       line: isOurs(current)
@@ -197,7 +207,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
 
   // Читаем ДО бэкапа: неразбираемый конфиг = отказ без единой записи на диск.
   const doc = loadYamlMap(readRaw(configPath), configPath);
-  editProvider(doc, configPath, input.apiKey);
+  editProvider(doc, configPath, input);
   const defaults = editDefaultModel(doc, input);
   const staleNote = staleRefsNote(defaults.staleRefs);
 
