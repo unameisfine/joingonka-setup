@@ -89,12 +89,31 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     doc.deleteIn(['model']);
   }
 
-  // Точечные setIn: наши 4 ключа перезаписываются (reconcile — устаревшая
+  // Точечные setIn: наши ключи перезаписываются (reconcile — устаревшая
   // модель/URL/ключ не переживают повторную установку), чужие поля внутри
   // model (temperature и т.п.) и все прочие ключи конфига остаются как были.
   doc.setIn(['model', 'provider'], 'custom');
+  // ★ Модель пишем в model.default — это КАНОНИЧЕСКИЙ ключ Hermes.
+  // Проверено по исходнику (hermes_cli/config.py, _normalize_model_config):
+  // приоритет `default` > `model` > `name`, причём явный `default` НИКОГДА не
+  // перекрывается псевдонимами. До 0.4.5 мы писали только `model.model`, и на
+  // любой уже настроенной установке (мастер Hermes задаёт `default`) наша
+  // модель молча игнорировалась — агент продолжал ходить со старой, в том
+  // числе с выведенной из сети.
+  doc.setIn(['model', 'default'], input.model);
+  // `model` дублируем для старых сборок Hermes, которые знают только его;
+  // современные при первом же сохранении схлопнут псевдоним в `default`.
   doc.setIn(['model', 'model'], input.model);
+  // `name` — третий псевдоним той же модели: оставленный, он переживёт наш
+  // `default` только в старых сборках, поэтому убираем.
+  doc.deleteIn(['model', 'name']);
   doc.setIn(['model', 'base_url'], BASE_URL_OPENAI);
+  // Устаревшие способы передать ключ: если они остались от прошлых версий
+  // установщика или от мастера Hermes, ключ может читаться из окружения, а не
+  // из конфига. Сам Hermes чистит их тем же способом.
+  for (const stale of ['api_mode', 'key_env', 'api_key_env']) {
+    doc.deleteIn(['model', stale]);
+  }
   // api_key = ЛИТЕРАЛЬНЫЙ ключ jg-... — НЕ env-ссылка и НЕ ~/.hermes/.env:
   // custom endpoint читает ключ только из model.api_key (config.py:1079),
   // с OPENAI_API_KEY в .env gateway отдаёт 401. Файл пишется 0o600.

@@ -33,7 +33,8 @@ import {
   kiloModelEntry,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
-import { deepMergeJson, isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
+import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 const OWNER_ONLY_MODE = 0o600;
@@ -64,68 +65,53 @@ function buildModels(): JsonObject {
   return models;
 }
 
-function buildConfig(existing: JsonObject, apiKey: string): JsonObject {
-  const patch: JsonObject = {
-    $schema: 'https://app.kilo.ai/config.json',
-    provider: {
-      [KILO_PROVIDER_ID]: {
-        npm: OPENCODE_NPM,
-        name: 'JoinGonka',
-        options: {
-          baseURL: BASE_URL_OPENAI,
-          // Литеральный ключ jg-... (НЕ {env:...}-ссылка): без env-формы Kilo берёт
-          // значение как есть → работает БЕЗ внешней переменной. Раньше тут была
-          // {env:GONKA_API_KEY}, и без экспортированной переменной провайдер не
-          // поднимался. Файл пишется 0o600 (owner-only).
-          apiKey,
-        },
-        models: buildModels(),
-      },
-    },
-  };
+/**
+ * Точечные правки kilo.jsonc: блок нашего провайдера (каталог моделей — целиком
+ * актуальным набором) и top-level `model`. Файл — JSONC: комментарии и висячие
+ * запятые в нём законны, поэтому правим текст, а не пересобираем документ.
+ */
+function buildEdits(existing: JsonObject, input: ApplyInput): { edits: JsonEdit[]; model: string } {
+  const provider = ['provider', KILO_PROVIDER_ID];
+  const edits: JsonEdit[] = [
+    { path: ['$schema'], value: 'https://app.kilo.ai/config.json' },
+    { path: [...provider, 'npm'], value: OPENCODE_NPM },
+    { path: [...provider, 'name'], value: 'JoinGonka' },
+    { path: [...provider, 'options', 'baseURL'], value: BASE_URL_OPENAI },
+    // Литеральный ключ jg-... (НЕ {env:...}-ссылка): без env-формы Kilo берёт
+    // значение как есть → работает БЕЗ внешней переменной. Файл 0o600.
+    { path: [...provider, 'options', 'apiKey'], value: input.apiKey },
+    { path: [...provider, 'models'], value: buildModels() },
+  ];
 
-  const merged = deepMergeJson(existing, patch);
+  const current = existing.model;
+  const needsReset =
+    typeof current !== 'string' ||
+    current.trim() === '' ||
+    isStaleProviderModelRef(current, KILO_PROVIDER_ID, CANONICAL_IDS);
 
-  // Наш провайдер — единственный источник правды по СВОЕМУ каталогу: заменяем
-  // models ЦЕЛИКОМ актуальным набором, чтобы убрать устаревшие модели (напр. Qwen),
-  // оставшиеся от прошлых версий установщика.
-  const ourProvider = asObject(asObject(merged.provider)?.[KILO_PROVIDER_ID]);
-  if (ourProvider) ourProvider.models = buildModels();
-
-  // top-level `model`: наш дефолт, если не задан ИЛИ указывает на нашу убранную
-  // модель. Пользовательский дефолт на чужой провайдер или на актуальную нашу
-  // модель — НЕ трогаем.
-  if (
-    typeof merged.model !== 'string' ||
-    (merged.model as string).trim() === '' ||
-    isStaleProviderModelRef(merged.model, KILO_PROVIDER_ID, CANONICAL_IDS)
-  ) {
-    merged.model = KILO_DEFAULT_MODEL;
+  let model: string;
+  if (input.modelExplicit) {
+    model = `${KILO_PROVIDER_ID}/${input.model}`;
+    edits.push({ path: ['model'], value: model });
+  } else if (needsReset) {
+    model = KILO_DEFAULT_MODEL;
+    edits.push({ path: ['model'], value: model });
+  } else {
+    model = current as string;
   }
 
-  return merged;
+  return { edits, model };
 }
 
 async function apply(input: ApplyInput): Promise<ApplyResult> {
   const configPath = resolvePath(input.scope);
 
-  const raw = readRaw(configPath);
+  // Читаем ДО бэкапа: неразбираемый конфиг = отказ без единой записи на диск.
+  const doc = readJsonConfig(readRaw(configPath), configPath);
   const backupPath = backup(configPath);
 
-  let existing: JsonObject = {};
-  if (raw != null) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        existing = parsed as JsonObject;
-      }
-    } catch {
-      existing = {};
-    }
-  }
-
-  const config = buildConfig(existing, input.apiKey);
-  await atomicWrite(configPath, JSON.stringify(config, null, 2) + '\n', OWNER_ONLY_MODE);
+  const { edits, model } = buildEdits(doc.value, input);
+  await atomicWrite(configPath, applyJsonEdits(doc.text, edits), OWNER_ONLY_MODE);
 
   return {
     configPath,
@@ -134,7 +120,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     messages: [
       `Configured ${configPath}`,
       `Base URL: ${BASE_URL_OPENAI}`,
-      `Default model: ${KILO_DEFAULT_MODEL}`,
+      `Default model: ${model}`,
       '',
       // Ключ записан ЛИТЕРАЛЬНО в kilo.jsonc (0o600). Раньше писали {env:GONKA_API_KEY}
       // и просили export — но без экспортированной переменной провайдер не поднимался.

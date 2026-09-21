@@ -10,8 +10,8 @@
  * Промпты инъектируются через deps — это делает оркестратор полностью
  * тестируемым (spy-функции) и отвязывает его от @inquirer/prompts.
  */
-import { DEFAULT_MODEL, DEEPSEEK_MODEL, GLM_MODEL } from './constants.js';
 import { validateApiKey } from './core/validate.js';
+import { canonicalModel } from './core/models.js';
 import { getAdapter, listTools } from './adapters/registry.js';
 import type { ApplyResult, Scope } from './adapters/types.js';
 import { verifyConfig, type VerifyResult } from './core/verify.js';
@@ -42,22 +42,8 @@ export interface RunOutcome {
   result: ApplyResult;
   /** Результат live-проверки (undefined, если verify отключён через --no-verify). */
   verification?: VerifyResult;
-}
-
-/**
- * Разрешает значение модели:
- * - undefined / пусто → дефолт адаптера, иначе общий DEFAULT_MODEL;
- * - 'glm' (регистронезависимо) → GLM_MODEL;
- * - 'deepseek' (регистронезависимо) → DEEPSEEK_MODEL;
- * - любое другое → используется как явный id модели.
- *
- * Явный --model всегда сильнее пер-инструментного дефолта.
- */
-function resolveModel(model?: string, adapterDefault?: string): string {
-  if (!model) return adapterDefault ?? DEFAULT_MODEL;
-  if (model.toLowerCase() === 'glm') return GLM_MODEL;
-  if (model.toLowerCase() === 'deepseek') return DEEPSEEK_MODEL;
-  return model;
+  /** Непустое, если модель вне каталога установщика (записали, но предупреждаем). */
+  modelWarning?: string;
 }
 
 /** Имя env-переменной с ключом для non-interactive режима. */
@@ -65,6 +51,9 @@ const API_KEY_ENV = 'JOINGONKA_API_KEY';
 
 export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcome> {
   const scope: Scope = options.scope ?? 'user';
+  if (scope !== 'user' && scope !== 'local') {
+    throw new Error(`Unknown scope: ${String(scope)}. Valid scopes: user, local.`);
+  }
 
   // 1. Выбор инструмента: явный --tool либо интерактивный select.
   const toolId = options.tool ?? (await deps.askTool());
@@ -74,6 +63,16 @@ export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcom
       .map((t) => t.value)
       .join(', ');
     throw new Error(`Unknown tool: ${toolId}. Valid tools: ${valid}.`);
+  }
+
+  // 1a. Область установки. Инструмент без проектного конфига обязан сказать
+  //     об этом ДО записи: молча положить конфиг в домашний каталог, когда
+  //     человек просил проект, — тихий обман (так было до 0.4.5).
+  if (scope === 'local' && !adapter.supportsLocalScope) {
+    throw new Error(
+      `${adapter.id} keeps a single per-user config, so --scope local does not apply to it. ` +
+        `Re-run without --scope local (supported for: claude-code).`,
+    );
   }
 
   // 2. API-ключ. В non-interactive — ТОЛЬКО из env (никогда из CLI-аргумента:
@@ -95,11 +94,13 @@ export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcom
     apiKey = await deps.askApiKey();
   }
 
-  // 3. Модель.
-  const model = resolveModel(options.model, adapter.defaultModel);
+  // 3. Модель. Разбор ДО записи: выведенная из сети модель (kimi и т.п.) или
+  //    опечатка в алиасе должны останавливать установку, а не портить конфиг.
+  const modelExplicit = typeof options.model === 'string' && options.model.trim() !== '';
+  const { model, warning: modelWarning } = canonicalModel(options.model, adapter.defaultModel);
 
   // 4. Применяем.
-  const result = await adapter.apply({ apiKey, model, scope });
+  const result = await adapter.apply({ apiKey, model, scope, modelExplicit });
 
   // 5. Live-проверка: реальный запрос к gate записанными ключом+моделью —
   //    подтверждает, что настройка рабочая (ловит мёртвый ключ/URL/модель —
@@ -113,5 +114,5 @@ export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcom
     });
   }
 
-  return { toolId: adapter.id, result, verification };
+  return { toolId: adapter.id, result, verification, modelWarning };
 }

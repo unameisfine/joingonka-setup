@@ -23,9 +23,12 @@
  *   работает без env. Изолированный конфиг OpenClaw — общие глобальные OPENAI_ /
  *   ANTHROPIC_ переменные не трогаются (та же причина, по которой НЕ пишем env).
  *
- * Слияние НЕ разрушает чужие данные: другие провайдеры, чужие поля внутри
- * нашего провайдера, чужие алиасы и пользовательский primary сохраняются
- * (deepMergeJson + upsertById, primary ставится только при отсутствии).
+ * ★ Правки ТОЧЕЧНЫЕ (core/json-config): меняем только свои пути, а чужие
+ * провайдеры, поля, алиасы, КОММЕНТАРИИ и форматирование файла остаются как
+ * были. До 0.4.5 конфиг пересобирался через JSON.parse + сериализацию: файл с
+ * комментарием или висячей запятой (openclaw.json — JSON5) не парсился, адаптер
+ * молча стартовал с `{}` и уносил всю конфигурацию пользователя. Теперь такой
+ * файл приводит к отказу без записи.
  *
  * Путь один для обоих scope: OpenClaw читает глобальный конфиг. Env
  * OPENCLAW_CONFIG_PATH (если задан) переопределяет путь.
@@ -38,16 +41,13 @@ import {
   OPENCLAW_PROVIDER_API,
   OPENCLAW_MODELS,
   OPENCLAW_DEFAULT_PRIMARY,
+  OPENCLAW_DEFAULT_FALLBACKS,
   openclawModelEntry,
   openclawModelRef,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
-import {
-  deepMergeJson,
-  isStaleProviderModelRef,
-  pruneStaleProviderAliases,
-  type JsonObject,
-} from '../core/merge.js';
+import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файл конфига — только владелец (rw-------). */
@@ -78,120 +78,104 @@ function asObject(value: unknown): JsonObject | undefined {
 }
 
 /**
- * Строит итоговый конфиг из существующего объекта, не разрушая чужие данные.
+ * Собирает список точечных правок по существующему конфигу.
  *
- * Шаги:
- *   - каталог моделей провайдера gonka строим FRESH из актуального набора
- *     (deepMerge заменит массив → устаревшие модели, напр. Qwen, удаляются);
- *   - deep-merge провайдера gonka (baseUrl/api/apiKey + наш models);
- *   - deep-merge алиасов + прунинг НАШИХ устаревших алиасов в agents.defaults.models;
- *   - primary в agents.defaults.model.primary — ставим наш дефолт, если не задан
- *     ИЛИ указывает на нашу убранную модель (чужой/актуальный — не трогаем).
+ * Что меняем: блок провайдера gonka (каталог моделей — целиком актуальным
+ * набором, поэтому устаревшие модели прошлых версий исчезают), свои алиасы,
+ * primary и запасные модели. Всё остальное в файле не адресуется ни одной
+ * правкой и потому физически не может измениться.
  */
-function buildConfig(existing: JsonObject, apiKey: string): JsonObject {
-  // 1. Каталог моделей нашего провайдера строим FRESH из актуального каталога —
-  //    НЕ сидим из существующего. deepMergeJson заменяет массив целиком, поэтому
-  //    устаревшие модели (напр. Qwen из прошлых версий установщика) удаляются, а
-  //    дубли не появляются. Чужие провайдеры/поля сохранит deepMerge ниже.
-  const models: unknown[] = OPENCLAW_MODELS.map((spec) => ({
-    id: spec.id,
-    ...openclawModelEntry(spec),
-  }));
+function buildEdits(
+  existing: JsonObject,
+  input: ApplyInput,
+): { edits: JsonEdit[]; primaryRef: string } {
+  const edits: JsonEdit[] = [];
 
-  // 2. Патч провайдера + агентов (deep-merge сохранит чужие провайдеры/алиасы).
-  const patch: JsonObject = {
-    models: {
-      // mode:"merge" — слить наш каталог провайдеров с бандл-провайдерами OpenClaw,
-      // а не заменить их (без него мульти-провайдерные сборки рискуют потерять бандлы).
-      mode: 'merge',
-      providers: {
-        [OPENCLAW_PROVIDER_ID]: {
-          baseUrl: BASE_URL_OPENAI,
-          api: OPENCLAW_PROVIDER_API,
-          // apiKey = ЛИТЕРАЛЬНЫЙ ключ jg-... (НЕ ${env}-ссылка). Без ${...} OpenClaw
-          // берёт значение как есть → работает БЕЗ внешней env-переменной. Раньше
-          // тут была ${GONKA_API_KEY}-ссылка: gateway падал «SecretRef unresolved»,
-          // если переменная не экспортирована в его окружении (а установщик её не
-          // персистил). Файл пишется 0o600 (owner-only), как нативный auth.json у
-          // opencode. Поле `auth` не пишем (OpenAI-режим).
-          apiKey,
-          models,
-        },
-      },
-    },
-    agents: {
-      defaults: {
-        models: Object.fromEntries(
-          OPENCLAW_MODELS.filter((m) => m.aliasFor).map((m) => [
-            openclawModelRef(m.id),
-            { alias: m.aliasFor },
-          ]),
-        ),
-      },
-    },
-  };
+  // 1. Провайдер gonka. Каталог моделей строим FRESH из актуального набора:
+  //    массив заменяется целиком, поэтому устаревшие модели прошлых версий
+  //    установщика (напр. Qwen) исчезают, а дубли не появляются.
+  const models = OPENCLAW_MODELS.map((spec) => ({ id: spec.id, ...openclawModelEntry(spec) }));
+  const provider = ['models', 'providers', OPENCLAW_PROVIDER_ID];
+  edits.push(
+    // mode:"merge" — слить наш каталог провайдеров с бандл-провайдерами OpenClaw.
+    { path: ['models', 'mode'], value: 'merge' },
+    { path: [...provider, 'baseUrl'], value: BASE_URL_OPENAI },
+    { path: [...provider, 'api'], value: OPENCLAW_PROVIDER_API },
+    // apiKey = ЛИТЕРАЛЬНЫЙ ключ jg-... (НЕ ${env}-ссылка): без ${...} OpenClaw
+    // берёт значение как есть → работает БЕЗ внешней env-переменной.
+    { path: [...provider, 'apiKey'], value: input.apiKey },
+    { path: [...provider, 'models'], value: models },
+  );
 
-  const merged = deepMergeJson(existing, patch);
-
-  // 3. Алиасы agents.defaults.models: deepMerge добавил наши актуальные, но НЕ
-  //    удалил бы НАШИ устаревшие (напр. gonka/Qwen…). Прунаем их; чужие алиасы
-  //    (openai/… и т.п.) и актуальные наши — остаются.
-  const defaults = asObject(asObject(merged.agents)?.defaults) ?? {};
+  // 2. Алиасы каталога: наши актуальные — ставим, наши устаревшие — удаляем.
+  //    Чужие алиасы (openai/… и т.п.) не трогаем вовсе.
+  const defaults = asObject(asObject(existing.agents)?.defaults) ?? {};
+  for (const spec of OPENCLAW_MODELS) {
+    if (!spec.aliasFor) continue;
+    edits.push({
+      path: ['agents', 'defaults', 'models', openclawModelRef(spec.id), 'alias'],
+      value: spec.aliasFor,
+    });
+  }
   const aliasMap = asObject(defaults.models);
-  const prunedAliases = aliasMap
-    ? pruneStaleProviderAliases(aliasMap, OPENCLAW_PROVIDER_ID, CANONICAL_IDS)
-    : undefined;
+  if (aliasMap) {
+    for (const ref of Object.keys(aliasMap)) {
+      if (isStaleProviderModelRef(ref, OPENCLAW_PROVIDER_ID, CANONICAL_IDS)) {
+        edits.push({ path: ['agents', 'defaults', 'models', ref], value: undefined });
+      }
+    }
+  }
 
-  // 4. primary — наш дефолт, если не задан ИЛИ указывает на нашу убранную модель
-  //    (иначе OpenClaw сошлётся на несуществующую). Пользовательский primary на
-  //    чужой провайдер или на актуальную нашу модель — НЕ трогаем.
+  // 3. primary: явный --model пишем всегда (иначе флаг молча не действует),
+  //    иначе — только если primary пуст или указывает на нашу убранную модель.
   const modelBlock = asObject(defaults.model) ?? {};
   const primary = modelBlock.primary;
-  const needPrimaryReset =
+  const primaryNeedsReset =
     typeof primary !== 'string' ||
     primary.trim() === '' ||
     isStaleProviderModelRef(primary, OPENCLAW_PROVIDER_ID, CANONICAL_IDS);
+  // primaryRef — то, что в конфиге окажется ФАКТИЧЕСКИ (для сообщения пользователю:
+  // печатать «Default model: …наш дефолт», сохранив чужой primary, — враньё).
+  let primaryRef: string;
+  if (input.modelExplicit) {
+    primaryRef = openclawModelRef(input.model);
+    edits.push({ path: ['agents', 'defaults', 'model', 'primary'], value: primaryRef });
+  } else if (primaryNeedsReset) {
+    primaryRef = OPENCLAW_DEFAULT_PRIMARY;
+    edits.push({ path: ['agents', 'defaults', 'model', 'primary'], value: primaryRef });
+  } else {
+    primaryRef = primary as string;
+  }
 
-  // Пересобираем agents.defaults с прунутыми алиасами и (при необходимости) primary.
-  const agents = asObject(merged.agents) ?? {};
-  merged.agents = {
-    ...agents,
-    defaults: {
-      ...defaults,
-      ...(prunedAliases ? { models: prunedAliases } : {}),
-      model: needPrimaryReset
-        ? { ...modelBlock, primary: OPENCLAW_DEFAULT_PRIMARY }
-        : modelBlock,
-    },
-  };
+  // 4. Запасные модели: ёмкость DeepSeek и GLM ниже, чем у MiniMax, поэтому
+  //    отказ основной модели должен переключать агента, а не ронять его.
+  //    Свой список пользователя не трогаем.
+  const fallbacks = modelBlock.fallbacks;
+  const hasOwnFallbacks = Array.isArray(fallbacks) && fallbacks.length > 0;
+  if (!hasOwnFallbacks) {
+    edits.push({
+      path: ['agents', 'defaults', 'model', 'fallbacks'],
+      value: OPENCLAW_DEFAULT_FALLBACKS.filter((ref) => ref !== primaryRef),
+    });
+  }
 
-  return merged;
+  return { edits, primaryRef };
 }
 
 async function apply(input: ApplyInput): Promise<ApplyResult> {
   const configPath = resolvePath(input.scope);
 
-  // Читаем существующее (если есть) и бэкапим ВСЕГДА при наличии файла —
-  // даже если JSON битый, чтобы пользователь не потерял данные безвозвратно.
-  const raw = readRaw(configPath);
+  // Читаем ДО бэкапа: файл, который нельзя разобрать, приводит к отказу, и
+  // тогда мы не трогаем диск вовсе (ни записи, ни лишнего .bak).
+  const doc = readJsonConfig(readRaw(configPath), configPath);
   const backupPath = backup(configPath);
 
-  let existing: JsonObject = {};
-  if (raw != null) {
-    try {
-      const parsed = JSON.parse(raw);
-      existing = asObject(parsed) ?? {};
-    } catch {
-      // Битый JSON → стартуем со свежего объекта (бэкап уже сделан).
-      existing = {};
-    }
-  }
-
-  const config = buildConfig(existing, input.apiKey);
+  const { edits, primaryRef } = buildEdits(doc.value, input);
+  const text = applyJsonEdits(doc.text, edits);
 
   // Записываем 0o600 (owner-only): в файле лежит литеральный ключ jg-..., как
   // нативный auth.json у opencode.
-  await atomicWrite(configPath, JSON.stringify(config, null, 2) + '\n', OWNER_ONLY_MODE);
+  await atomicWrite(configPath, text, OWNER_ONLY_MODE);
 
   return {
     configPath,
@@ -200,7 +184,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     messages: [
       `Configured ${configPath}`,
       `Base URL: ${BASE_URL_OPENAI}`,
-      `Default model: ${OPENCLAW_DEFAULT_PRIMARY}`,
+      `Default model: ${primaryRef}`,
       '',
       // Ключ записан ЛИТЕРАЛЬНО в конфиг (0o600). Никаких env-переменных: раньше мы
       // писали ${GONKA_API_KEY}-ссылку, и gateway OpenClaw падал, если переменная не

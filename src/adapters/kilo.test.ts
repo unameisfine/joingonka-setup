@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { kiloAdapter } from './kilo.js';
+import { KILO_DEFAULT_MODEL, GLM_MODEL } from '../constants.js';
 
 let tmpDir: string;
 let configPath: string;
@@ -63,7 +64,7 @@ describe('kiloAdapter.apply', () => {
     expect(models['Qwen/Qwen3-235B-A22B-Instruct-2507-FP8']).toBeUndefined(); // убрана
     expect(models['zai-org/GLM-5.3-Flash']).toBeTruthy();
     expect(models['MiniMaxAI/MiniMax-M2.7']).toBeTruthy();
-    expect(cfg.model).toBe('joingonka/MiniMaxAI/MiniMax-M2.7'); // дефолт на Qwen → сброшен
+    expect(cfg.model).toBe(KILO_DEFAULT_MODEL); // дефолт на Qwen → сброшен
   });
 
   it('НЕ трогает пользовательский дефолт на чужой провайдер', async () => {
@@ -78,10 +79,41 @@ describe('kiloAdapter.apply', () => {
     expect(cfg.provider.joingonka).toBeTruthy(); // наш добавлен
   });
 
-  it('sets kilo $schema and default model when absent', async () => {
+  it('sets kilo $schema and the coding-agent default model when absent', async () => {
     await kiloAdapter.apply(input);
     const cfg = readConfig();
     expect(cfg.$schema).toBe('https://app.kilo.ai/config.json');
-    expect(cfg.model).toBe('joingonka/MiniMaxAI/MiniMax-M2.7');
+    expect(cfg.model).toBe(KILO_DEFAULT_MODEL);
+  });
+});
+
+describe('kiloAdapter.apply — сохранность чужого и явная модель (0.4.5)', () => {
+  it('keeps comments, trailing commas and foreign providers', async () => {
+    // kilo.jsonc — JSONC: в примерах официальной доки есть висячие запятые.
+    writeFileSync(
+      configPath,
+      `{
+  // не трогать: мой локальный провайдер
+  "provider": { "ollama": { "npm": "ollama-ai-provider", }, },
+}`,
+    );
+
+    await kiloAdapter.apply(input);
+
+    const raw = readFileSync(configPath, 'utf-8');
+    expect(raw).toContain('// не трогать: мой локальный провайдер');
+    expect(raw).toContain('"ollama"');
+    expect(raw).toContain('"joingonka"');
+  });
+
+  it('refuses a config it cannot parse and writes nothing', async () => {
+    writeFileSync(configPath, '{ "provider": ');
+    await expect(kiloAdapter.apply(input)).rejects.toThrow(/Nothing was written/);
+    expect(readFileSync(configPath, 'utf-8')).toBe('{ "provider": ');
+  });
+
+  it('writes an explicit --model', async () => {
+    await kiloAdapter.apply({ ...input, model: GLM_MODEL, modelExplicit: true });
+    expect(readConfig().model).toBe(`joingonka/${GLM_MODEL}`);
   });
 });

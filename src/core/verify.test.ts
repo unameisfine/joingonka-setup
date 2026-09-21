@@ -59,3 +59,54 @@ describe('verifyConfig — провалы', () => {
     expect(r.detail).toContain('ECONNREFUSED');
   });
 });
+
+describe('verifyConfig — классификация исхода (0.4.5)', () => {
+  const opts = {
+    apiMode: 'openai' as const,
+    apiKey: 'jg-test',
+    model: 'MiniMaxAI/MiniMax-M2.7',
+    retryDelayMs: 0,
+  };
+
+  it('treats 401 as a configuration failure', async () => {
+    globalThis.fetch = (async () =>
+      new Response('bad key', { status: 401 })) as unknown as typeof fetch;
+    const res = await verifyConfig(opts);
+    expect(res.outcome).toBe('config');
+    expect(res.ok).toBe(false);
+  });
+
+  it('treats 402 as a working key with an empty balance, without retrying', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response('no funds', { status: 402 });
+    }) as unknown as typeof fetch;
+
+    const res = await verifyConfig(opts);
+
+    expect(res.outcome).toBe('unavailable');
+    expect(res.detail).toMatch(/the key works/i);
+    expect(calls).toBe(1);
+  });
+
+  it('retries a busy network and succeeds on a later attempt', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return calls < 3 ? new Response('busy', { status: 429 }) : new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const res = await verifyConfig(opts);
+
+    expect(res.ok).toBe(true);
+    expect(calls).toBe(3);
+  });
+
+  it('reports an overloaded gateway as unavailable, not as a bad key', async () => {
+    globalThis.fetch = (async () =>
+      new Response('upstream busy', { status: 503 })) as unknown as typeof fetch;
+    const res = await verifyConfig(opts);
+    expect(res.outcome).toBe('unavailable');
+  });
+});

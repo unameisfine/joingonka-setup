@@ -32,6 +32,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import {
   BASE_URL_OPENAI,
+  CODING_AGENT_DEFAULT_MODEL,
   OPENCLAW_MODELS,
   PI_PROVIDER_ID,
   PI_PROVIDER_API,
@@ -111,11 +112,15 @@ function buildModelsConfig(existing: JsonObject, apiKey: string): JsonObject {
 }
 
 /**
- * Ставит дефолтную модель в settings.json, если её нет ИЛИ она указывает на
- * нашего провайдера с моделью, которой больше нет в каталоге. Возвращает
- * сообщения для пользователя.
+ * Ставит дефолтную модель в settings.json: при явном `--model` — всегда, иначе
+ * только когда дефолта нет ИЛИ он указывает на нашу модель, которой больше нет
+ * в каталоге.
+ *
+ * ★ Раньше рабочий выбор пользователя (наш провайдер + актуальная модель)
+ * молча перезаписывался на дефолт при каждой повторной установке, хотя гайд
+ * обещал обратное. Возвращает сообщения для пользователя.
  */
-async function applyDefaultModel(model: string): Promise<string[]> {
+async function applyDefaultModel(model: string, modelExplicit: boolean): Promise<string[]> {
   const path = settingsPath();
   const existing = readJsonObject(path);
 
@@ -134,11 +139,19 @@ async function applyDefaultModel(model: string): Promise<string[]> {
   const isStale = isOurs && typeof currentModel === 'string' && !CANONICAL_IDS.includes(currentModel);
   const unset = typeof currentProvider !== 'string' || String(currentProvider).trim() === '';
 
-  if (!unset && !isStale && !isOurs) {
+  if (!modelExplicit && !unset && !isStale && !isOurs) {
     // Пользователь выбрал ЧУЖОГО провайдера — не переключаем молча.
     return [
       `Kept your existing default model (${String(currentProvider)}/${String(currentModel)}).`,
       `      Switch inside Pi with: /model`,
+    ];
+  }
+
+  if (!modelExplicit && isOurs && !isStale && typeof currentModel === 'string') {
+    // Наш провайдер и актуальная модель — это осознанный выбор пользователя.
+    return [
+      `Kept your current default model (${currentModel}).`,
+      `      Switch it with: --model deepseek|glm|minimax, or inside Pi: /model`,
     ];
   }
 
@@ -162,7 +175,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
   // 0o600: внутри литеральный ключ jg-...
   await atomicWrite(configPath, JSON.stringify(config, null, 2) + '\n', OWNER_ONLY_MODE);
 
-  const defaultMessages = await applyDefaultModel(input.model);
+  const defaultMessages = await applyDefaultModel(input.model, input.modelExplicit === true);
 
   return {
     configPath,
@@ -188,6 +201,9 @@ export const piAdapter: Adapter = {
   label: 'Pi (OpenAI-compatible)',
   format: 'json',
   apiMode: 'openai',
+  // Кодовый агент: решение оператора 21.09.2026 — там, где установщик ПИШЕТ
+  // модель в конфиг, по умолчанию идёт DeepSeek V4 Flash (380K/32768).
+  defaultModel: CODING_AGENT_DEFAULT_MODEL,
   resolvePath,
   apply,
 };

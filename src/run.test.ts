@@ -186,3 +186,41 @@ describe('run — model selection', () => {
     expect(result.result.messages.join('\n')).toContain('zai-org/GLM-5.3-Flash');
   });
 });
+
+describe('run() — модель и область установки (0.4.5)', () => {
+  const deps = (): RunDeps => ({
+    askTool: vi.fn(),
+    askApiKey: vi.fn().mockResolvedValue('jg-test123'),
+  });
+
+  it('stops before writing when the model left the network', async () => {
+    await expect(
+      run({ tool: 'openclaw', model: 'kimi', verify: false }, deps()),
+    ).rejects.toThrow(/no longer served/i);
+  });
+
+  it('stops on a typo in the model shortcut', async () => {
+    await expect(
+      run({ tool: 'hermes', model: 'deepsek', verify: false }, deps()),
+    ).rejects.toThrow(/Unknown model/i);
+  });
+
+  it('refuses --scope local for a tool without a project config', async () => {
+    await expect(
+      run({ tool: 'openclaw', scope: 'local', verify: false }, deps()),
+    ).rejects.toThrow(/--scope local does not apply/);
+  });
+
+  it('allows --scope local for claude-code', async () => {
+    const outcome = await run({ tool: 'claude-code', scope: 'local', verify: false }, deps());
+    expect(outcome.result.configPath).toContain('.claude/settings.local.json');
+  });
+
+  it('reports a warning for a model outside the catalog', async () => {
+    const outcome = await run(
+      { tool: 'openclaw', model: 'newvendor/Model-X', verify: false },
+      deps(),
+    );
+    expect(outcome.modelWarning).toMatch(/not in this installer/i);
+  });
+});

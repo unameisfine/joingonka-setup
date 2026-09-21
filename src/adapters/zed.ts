@@ -25,7 +25,7 @@
  */
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { applyEdits, modify, parse as parseJsonc, type ParseError } from 'jsonc-parser';
+import { applyEdits, modify } from 'jsonc-parser';
 import {
   BASE_URL_OPENAI,
   OPENCLAW_MODELS,
@@ -34,6 +34,7 @@ import {
   zedModelEntry,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
+import { readJsonConfig } from '../core/json-config.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Отступы правок — как в дефолтном settings.json Zed. */
@@ -58,18 +59,12 @@ const PROVIDER_PATH = ['language_models', 'openai_compatible', ZED_PROVIDER_ID];
 async function apply(input: ApplyInput): Promise<ApplyResult> {
   const configPath = resolvePath(input.scope);
 
-  const raw = readRaw(configPath);
+  // Читаем ДО бэкапа. Неразбираемый settings.json — отказ без записи: это
+  // ГЛАВНЫЙ конфиг редактора (темы, LSP, кейбинды), и замена его свежим
+  // документом обошлась бы пользователю дороже, чем ненастроенный провайдер.
+  const doc = readJsonConfig(readRaw(configPath), configPath);
   const backupPath = backup(configPath);
-
-  // Битый JSONC → стартуем с пустого документа (бэкап уже сделан).
-  let text = raw ?? '{}';
-  if (raw != null) {
-    const errors: ParseError[] = [];
-    parseJsonc(raw, errors, { allowTrailingComma: true });
-    if (errors.length > 0) {
-      text = '{}';
-    }
-  }
+  let text = doc.text;
 
   // Каталог моделей строим FRESH: устаревшие модели прошлых версий установщика
   // (напр. Qwen) исчезают, потому что массив заменяется целиком.
@@ -77,10 +72,23 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
 
   // Точечные правки по путям — чужие настройки и КОММЕНТАРИИ файла целы.
   // Ключ (api_key) НЕ пишем: Zed его отсюда не читает и док это запрещает.
-  for (const [path, value] of [
+  const edits: Array<[Array<string | number>, unknown]> = [
     [[...PROVIDER_PATH, 'api_url'], BASE_URL_OPENAI],
     [[...PROVIDER_PATH, 'available_models'], availableModels],
-  ] as Array<[Array<string | number>, unknown]>) {
+  ];
+
+  // Явный --model доводим до конфига: до 0.4.5 флаг оставался только в тексте
+  // подсказки, а live-проверка при этом «подтверждала» модель, которой в
+  // настройках нет. Без явного флага выбор модели оставляем пользователю: в
+  // Zed он делается в панели агента, и перебивать его молча нельзя.
+  if (input.modelExplicit) {
+    edits.push([
+      ['agent', 'default_model'],
+      { provider: ZED_PROVIDER_ID, model: input.model },
+    ]);
+  }
+
+  for (const [path, value] of edits) {
     text = applyEdits(text, modify(text, path, value, { formattingOptions: FORMATTING }));
   }
 

@@ -338,3 +338,29 @@ describe('hermesAdapter.apply — file permissions', () => {
     expect(mode).toBe(0o600);
   });
 });
+
+describe('hermesAdapter.apply — каноничный ключ модели (0.4.5)', () => {
+  it('overrides model.default set by the Hermes wizard', async () => {
+    // Раньше писали только model.model, а Hermes читает model.default и
+    // псевдонимом её не перебивает — пользователь оставался на старой модели.
+    seedConfig('model:\n  provider: custom\n  default: moonshotai/Kimi-K2.6\n  temperature: 0.4\n');
+
+    await hermesAdapter.apply({ ...input(), model: DEEPSEEK_MODEL });
+
+    const cfg = readConfig();
+    expect(cfg.model.default).toBe(DEEPSEEK_MODEL);
+    expect(cfg.model.temperature).toBe(0.4); // чужое поле цело
+  });
+
+  it('drops the stale name alias and env-based key fields', async () => {
+    seedConfig('model:\n  name: old-model\n  key_env: OPENAI_API_KEY\n  api_mode: openai\n');
+
+    await hermesAdapter.apply(input());
+
+    const cfg = readConfig();
+    expect(cfg.model.name).toBeUndefined();
+    expect(cfg.model.key_env).toBeUndefined();
+    expect(cfg.model.api_mode).toBeUndefined();
+    expect(cfg.model.api_key).toBe('jg-test123');
+  });
+});

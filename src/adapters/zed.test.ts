@@ -214,18 +214,17 @@ describe('zedAdapter.apply — backups & malformed', () => {
     expect(result.backupPath).toBeNull();
   });
 
-  it('handles malformed JSONC by starting fresh and backing up', async () => {
-    seed('{ "theme": [unclosed');
+  it('refuses a settings.json it cannot parse and writes nothing', async () => {
+    // settings.json — главный конфиг редактора (темы, LSP, кейбинды). Раньше
+    // адаптер заменял его свежим документом; теперь отказ без записи.
+    const dir = join(tmpDir, '.config', 'zed');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'settings.json');
+    writeFileSync(file, '{ broken ]');
 
-    await zedAdapter.apply(input());
+    await expect(zedAdapter.apply(input())).rejects.toThrow(/Nothing was written/);
 
-    expect(readConfig().language_models.openai_compatible.joingonka.api_url).toBe(
-      'https://gate.joingonka.ai/v1',
-    );
-    const backups = readdirSync(join(tmpDir, '.config', 'zed')).filter((f) =>
-      f.startsWith('settings.json.bak.'),
-    );
-    expect(backups.length).toBeGreaterThan(0);
+    expect(readFileSync(file, 'utf8')).toBe('{ broken ]');
   });
 
   it('respects XDG_CONFIG_HOME for the write target', async () => {
@@ -237,5 +236,18 @@ describe('zedAdapter.apply — backups & malformed', () => {
     expect(result.configPath).toBe(join(xdg, 'zed', 'settings.json'));
     expect(existsSync(join(xdg, 'zed', 'settings.json'))).toBe(true);
     expect(existsSync(settingsPath())).toBe(false);
+  });
+});
+
+describe('zedAdapter.apply — явная модель (0.4.5)', () => {
+  it('writes agent.default_model only when --model was given', async () => {
+    await zedAdapter.apply(input());
+    expect(readConfig().agent).toBeUndefined();
+
+    await zedAdapter.apply({ ...input(), model: 'zai-org/GLM-5.3-Flash', modelExplicit: true });
+    expect(readConfig().agent.default_model).toEqual({
+      provider: 'joingonka',
+      model: 'zai-org/GLM-5.3-Flash',
+    });
   });
 });

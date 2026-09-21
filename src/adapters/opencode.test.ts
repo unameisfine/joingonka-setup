@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { opencodeAdapter } from './opencode.js';
+import { OPENCODE_DEFAULT_MODEL, DEEPSEEK_MODEL, GLM_MODEL } from '../constants.js';
 
 let tmpDir: string;
 let configPath: string;
@@ -79,11 +80,11 @@ describe('opencodeAdapter.apply — provider block (opencode.json)', () => {
     expect(models['zai-org/GLM-5.3-Flash'].limit.context).toBe(390000);
   });
 
-  it('sets $schema and default top-level model (MiniMax) when absent', async () => {
+  it('sets $schema and the coding-agent default model when absent', async () => {
     await opencodeAdapter.apply(input());
     const cfg = readConfig();
     expect(cfg.$schema).toBe('https://opencode.ai/config.json');
-    expect(cfg.model).toBe('joingonka/MiniMaxAI/MiniMax-M2.7');
+    expect(cfg.model).toBe(OPENCODE_DEFAULT_MODEL);
   });
 });
 
@@ -137,7 +138,7 @@ describe('opencodeAdapter.apply — merge-aware', () => {
     expect(models['moonshotai/Kimi-K2.6']).toBeUndefined(); // ушедшая из сети Kimi — тоже
     expect(models['MiniMaxAI/MiniMax-M2.7']).toBeTruthy();
     expect(models['zai-org/GLM-5.3-Flash']).toBeTruthy(); // актуальная есть
-    expect(cfg.model).toBe('joingonka/MiniMaxAI/MiniMax-M2.7'); // дефолт на Qwen → сброшен
+    expect(cfg.model).toBe(OPENCODE_DEFAULT_MODEL); // дефолт на Qwen → сброшен
   });
 
   it('preserves foreign credentials in auth.json', async () => {
@@ -147,5 +148,60 @@ describe('opencodeAdapter.apply — merge-aware', () => {
     const auth = readAuth();
     expect(auth.openai).toEqual({ type: 'api', key: 'sk-foreign' }); // чужой ключ цел
     expect(auth.joingonka).toEqual({ type: 'api', key: 'jg-test123' }); // наш добавлен
+  });
+});
+
+describe('opencodeAdapter.apply — сохранность чужого (0.4.5)', () => {
+  it('keeps comments and foreign settings in a JSONC config', async () => {
+    writeFileSync(
+      configPath,
+      `{
+  // мой любимый агент
+  "agent": { "build": { "model": "anthropic/claude" } },
+  "theme": "tokyonight",
+}`,
+    );
+
+    await opencodeAdapter.apply(input());
+
+    const raw = readFileSync(configPath, 'utf-8');
+    expect(raw).toContain('// мой любимый агент');
+    expect(raw).toContain('"tokyonight"');
+    expect(raw).toContain('"joingonka"');
+  });
+
+  it('keeps API keys of other providers in auth.json', async () => {
+    writeFileSync(
+      authPath,
+      JSON.stringify({ anthropic: { type: 'api', key: 'sk-other' } }, null, 2),
+    );
+
+    await opencodeAdapter.apply(input());
+
+    const auth = readAuth();
+    expect(auth.anthropic).toEqual({ type: 'api', key: 'sk-other' });
+    expect(auth.joingonka).toEqual({ type: 'api', key: 'jg-test123' });
+  });
+
+  it('refuses when auth.json cannot be parsed, leaving both files untouched', async () => {
+    writeFileSync(configPath, '{}');
+    writeFileSync(authPath, '{ broken');
+
+    await expect(opencodeAdapter.apply(input())).rejects.toThrow(/Nothing was written/);
+
+    expect(readFileSync(authPath, 'utf-8')).toBe('{ broken');
+    expect(readFileSync(configPath, 'utf-8')).toBe('{}');
+  });
+
+  it('writes an explicit --model as the top-level default', async () => {
+    await opencodeAdapter.apply({ ...input({ model: GLM_MODEL }), modelExplicit: true });
+    expect(readConfig().model).toBe(`joingonka/${GLM_MODEL}`);
+  });
+
+  it('keeps a foreign default model when no model was requested', async () => {
+    writeFileSync(configPath, JSON.stringify({ model: 'anthropic/claude-opus-5' }));
+    const result = await opencodeAdapter.apply(input());
+    expect(readConfig().model).toBe('anthropic/claude-opus-5');
+    expect(result.messages.join('\n')).toContain('anthropic/claude-opus-5');
   });
 });

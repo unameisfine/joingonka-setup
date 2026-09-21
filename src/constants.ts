@@ -41,6 +41,22 @@ export const GLM_MODEL = 'zai-org/GLM-5.3-Flash';
  */
 export const DEEPSEEK_MODEL = 'deepseek-ai/DeepSeek-V4-Flash-0731';
 
+/**
+ * Модель по умолчанию для инструментов, которым установщик ПИШЕТ модель в
+ * конфиг (claude-code, openclaw, opencode, kilo, pi, hermes) — решение
+ * оператора 21.09.2026: у кодовых агентов длинный контекст и потолок ответа
+ * важнее, чем максимальная ёмкость сети.
+ *
+ * Инструменты, которым мы только ПЕЧАТАЕМ инструкцию (Cursor, Cline, Continue,
+ * Aider, JetBrains, Copilot, ZCode, Zed, Roo), остаются на DEFAULT_MODEL:
+ * там модель выбирает человек руками, и подсказывать стоит самую ёмкую.
+ *
+ * ⚠ Ёмкость DeepSeek ниже, чем у MiniMax (замер 19.09.2026: худший час 56%
+ * успешных против 98%). Поэтому там, где инструмент умеет запасные модели,
+ * их обязательно прописываем (OpenClaw — OPENCLAW_DEFAULT_FALLBACKS).
+ */
+export const CODING_AGENT_DEFAULT_MODEL = DEEPSEEK_MODEL;
+
 // ────────────────────────────────────────────────────────────────────────────
 // OpenClaw-специфичные константы (JSON-конфиг ~/.openclaw/openclaw.json)
 // ────────────────────────────────────────────────────────────────────────────
@@ -97,12 +113,18 @@ export const OPENCLAW_CONTEXT_WINDOW = 200000;
  * Значения справочные — реальная тарификация считается на нашей стороне
  * (gateway), здесь они нужны лишь чтобы OpenClaw показывал примерную
  * стоимость в UI. cacheRead/cacheWrite приравнены к input.
+ *
+ * ⚠ Это ФОЛБЭК. Цена в GNK фиксирована (33/99 nGNK за токен), а в долларах
+ * плавает вместе с курсом GNK, поэтому установщик берёт живые значения из
+ * публичного GET /api/pricing и подставляет их; сюда падает только при
+ * недоступности шлюза. Срез 19.09.2026: $0.0062 вход / $0.0185 выход за 1M.
+ * До 0.4.5 здесь стояли 0.07/0.1 — UI OpenClaw и Pi завышал стоимость в 5–11 раз.
  */
 const OPENCLAW_COST = {
-  input: 0.07,
-  output: 0.1,
-  cacheRead: 0.07,
-  cacheWrite: 0.07,
+  input: 0.0062,
+  output: 0.0185,
+  cacheRead: 0.0062,
+  cacheWrite: 0.0062,
 } as const;
 
 /**
@@ -153,7 +175,18 @@ export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
  * `<provider>/<modelId>`. Ставится в agents.defaults.model.primary ТОЛЬКО
  * если пользователь ещё не задал свой primary.
  */
-export const OPENCLAW_DEFAULT_PRIMARY = `${OPENCLAW_PROVIDER_ID}/${DEFAULT_MODEL}`;
+export const OPENCLAW_DEFAULT_PRIMARY = `${OPENCLAW_PROVIDER_ID}/${CODING_AGENT_DEFAULT_MODEL}`;
+
+/**
+ * Запасные модели OpenClaw (`agents.defaults.model.fallbacks`) — по убыванию
+ * ёмкости после primary: GLM, затем MiniMax. Решение оператора 21.09.2026.
+ * Пишутся ТОЛЬКО если пользователь не задал свой список: смысл в том, чтобы
+ * отказ модели с малой ёмкостью не превращался в отказ агента.
+ */
+export const OPENCLAW_DEFAULT_FALLBACKS: readonly string[] = [
+  `${OPENCLAW_PROVIDER_ID}/${GLM_MODEL}`,
+  `${OPENCLAW_PROVIDER_ID}/${DEFAULT_MODEL}`,
+];
 
 /**
  * Сборка JSON-записи модели для каталога провайдера OpenClaw.
@@ -183,7 +216,7 @@ export const OPENCODE_PROVIDER_ID = 'joingonka';
 export const OPENCODE_NPM = '@ai-sdk/openai-compatible';
 
 /** Модель по умолчанию (top-level `model`): `<provider>/<modelId>` (= DEFAULT_MODEL). */
-export const OPENCODE_DEFAULT_MODEL = `${OPENCODE_PROVIDER_ID}/${DEFAULT_MODEL}`;
+export const OPENCODE_DEFAULT_MODEL = `${OPENCODE_PROVIDER_ID}/${CODING_AGENT_DEFAULT_MODEL}`;
 
 /**
  * Запись модели для opencode: `models: { "<id>": { name, limit:{context,output} } }`.
@@ -215,7 +248,7 @@ export const AIDER_DEFAULT_MODEL = `${AIDER_MODEL_PREFIX}${DEFAULT_MODEL}`;
 export const KILO_PROVIDER_ID = 'joingonka';
 
 /** Модель по умолчанию (top-level `model`): `<provider>/<modelId>`. */
-export const KILO_DEFAULT_MODEL = `${KILO_PROVIDER_ID}/${DEFAULT_MODEL}`;
+export const KILO_DEFAULT_MODEL = `${KILO_PROVIDER_ID}/${CODING_AGENT_DEFAULT_MODEL}`;
 
 /**
  * Запись модели для Kilo: `{ name, tool_call, [reasoning], limit:{context,output} }`.

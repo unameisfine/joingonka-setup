@@ -32,7 +32,12 @@ import {
 import { tmpdir, platform } from 'node:os';
 import { join } from 'node:path';
 import { openclawAdapter } from './openclaw.js';
-import { DEFAULT_MODEL } from '../constants.js';
+import {
+  DEFAULT_MODEL,
+  DEEPSEEK_MODEL,
+  GLM_MODEL,
+  OPENCLAW_DEFAULT_PRIMARY,
+} from '../constants.js';
 
 let tmpDir: string;
 let originalHome: string | undefined;
@@ -144,7 +149,12 @@ describe('openclawAdapter.apply — provider block', () => {
     expect(minimax.name).toBe('MiniMax M2.7 (Gonka)');
     expect(minimax.input).toEqual(['text']);
     expect(minimax.contextWindow).toBe(200000);
-    expect(minimax.cost).toEqual({ input: 0.07, output: 0.1, cacheRead: 0.07, cacheWrite: 0.07 });
+    expect(minimax.cost).toEqual({
+      input: 0.0062,
+      output: 0.0185,
+      cacheRead: 0.0062,
+      cacheWrite: 0.0062,
+    });
 
     // Пер-модельный контекст: DeepSeek 380K (замер 13.08.2026), не общий 200K
     const deepseek = byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')!;
@@ -166,11 +176,11 @@ describe('openclawAdapter.apply — provider block', () => {
 });
 
 describe('openclawAdapter.apply — agents defaults', () => {
-  it('sets primary to gonka/MiniMaxAI/MiniMax-M2.7 and registers an alias per model', async () => {
+  it('sets primary to the coding-agent default and registers an alias per model', async () => {
     await openclawAdapter.apply(input());
     const defaults = readConfig().agents.defaults;
 
-    expect(defaults.model.primary).toBe('gonka/MiniMaxAI/MiniMax-M2.7');
+    expect(defaults.model.primary).toBe(OPENCLAW_DEFAULT_PRIMARY);
     expect(defaults.models['gonka/MiniMaxAI/MiniMax-M2.7']).toEqual({ alias: 'minimax-m2.7' });
     expect(defaults.models['gonka/deepseek-ai/DeepSeek-V4-Flash-0731']).toEqual({
       alias: 'deepseek-v4-flash',
@@ -279,7 +289,7 @@ describe('openclawAdapter.apply — deep merge (do not clobber foreign data)', (
 
     await openclawAdapter.apply(input());
 
-    expect(readConfig().agents.defaults.model.primary).toBe('gonka/MiniMaxAI/MiniMax-M2.7');
+    expect(readConfig().agents.defaults.model.primary).toBe(OPENCLAW_DEFAULT_PRIMARY);
   });
 
   it('убирает ушедшие модели (Qwen, Kimi) из каталога, алиасов и primary на повторном apply', async () => {
@@ -327,7 +337,7 @@ describe('openclawAdapter.apply — deep merge (do not clobber foreign data)', (
     expect(aliases['openai/gpt-5.4']).toEqual({ alias: 'gpt' }); // чужой алиас цел
     expect(aliases['gonka/zai-org/GLM-5.3-Flash']).toEqual({ alias: 'glm-5.3-flash' });
 
-    expect(cfg.agents.defaults.model.primary).toBe('gonka/MiniMaxAI/MiniMax-M2.7'); // primary на ушедшую Kimi → сброшен
+    expect(cfg.agents.defaults.model.primary).toBe(OPENCLAW_DEFAULT_PRIMARY); // primary на ушедшую Kimi → сброшен
   });
 });
 
@@ -370,17 +380,18 @@ describe('openclawAdapter.apply — backups & malformed', () => {
     expect(result.backupPath).toBeNull();
   });
 
-  it('handles malformed existing JSON by starting fresh and backing up', async () => {
+  it('refuses to touch a config it cannot parse (no write, no backup)', async () => {
+    // ★ Класс дефекта, закрытый в 0.4.5: раньше такой файл молча заменялся
+    // свежим конфигом, и пользователь терял всё остальное содержимое.
     const dir = join(tmpDir, '.openclaw');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'openclaw.json'), '{ this is : not json ]');
+    const configFile = join(dir, 'openclaw.json');
+    writeFileSync(configFile, '{ this is : not json ]');
 
-    await openclawAdapter.apply(input());
+    await expect(openclawAdapter.apply(input())).rejects.toThrow(/Nothing was written/);
 
-    const cfg = readConfig();
-    expect(cfg.models.providers.gonka.api).toBe('openai-completions');
-    const backups = readdirSync(dir).filter((f) => f.startsWith('openclaw.json.bak.'));
-    expect(backups.length).toBeGreaterThan(0);
+    expect(readFileSync(configFile, 'utf8')).toBe('{ this is : not json ]');
+    expect(readdirSync(dir).filter((f) => f.startsWith('openclaw.json.bak.'))).toHaveLength(0);
   });
 
   it('respects OPENCLAW_CONFIG_PATH for the write target', async () => {
@@ -402,5 +413,65 @@ describe('openclawAdapter.apply — file permissions', () => {
     await openclawAdapter.apply(input());
     const mode = statSync(defaultConfigPath()).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+});
+
+describe('openclawAdapter.apply — JSONC и явная модель (0.4.5)', () => {
+  it('keeps comments, trailing commas and foreign settings intact', async () => {
+    // openclaw.json — JSON5: комментарии и висячие запятые законны. Раньше такой
+    // файл не парсился, адаптер стартовал с {} и уносил конфигурацию целиком.
+    const dir = join(tmpDir, '.openclaw');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'openclaw.json'),
+      `{
+  // мои MCP-серверы, не трогать
+  "mcp": { "servers": { "local": { "command": "node" } }, },
+  "channels": ["telegram"],
+}`,
+    );
+
+    await openclawAdapter.apply(input());
+
+    const raw = readFileSync(join(dir, 'openclaw.json'), 'utf-8');
+    expect(raw).toContain('// мои MCP-серверы, не трогать');
+    expect(raw).toContain('"channels"');
+    expect(raw).toContain('"local"');
+    expect(raw).toContain('"gonka"');
+  });
+
+  it('writes an explicit --model into primary', async () => {
+    await openclawAdapter.apply({ ...input(), model: GLM_MODEL, modelExplicit: true });
+    expect(readConfig().agents.defaults.model.primary).toBe(`gonka/${GLM_MODEL}`);
+  });
+
+  it('keeps the primary chosen by the user when no model was requested', async () => {
+    const dir = join(tmpDir, '.openclaw');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'openclaw.json'),
+      JSON.stringify({ agents: { defaults: { model: { primary: 'openai/gpt-5.4' } } } }),
+    );
+
+    const result = await openclawAdapter.apply(input());
+
+    expect(readConfig().agents.defaults.model.primary).toBe('openai/gpt-5.4');
+    // И сообщение не врёт про «Default model: …наш дефолт».
+    expect(result.messages.join('\n')).toContain('openai/gpt-5.4');
+  });
+
+  it('adds fallbacks without the primary, and never overrides the user list', async () => {
+    await openclawAdapter.apply(input());
+    const fallbacks = readConfig().agents.defaults.model.fallbacks as string[];
+    expect(fallbacks).toEqual([`gonka/${GLM_MODEL}`, `gonka/${DEFAULT_MODEL}`]);
+    expect(fallbacks).not.toContain(`gonka/${DEEPSEEK_MODEL}`); // это primary
+
+    const dir = join(tmpDir, '.openclaw');
+    writeFileSync(
+      join(dir, 'openclaw.json'),
+      JSON.stringify({ agents: { defaults: { model: { fallbacks: ['openai/gpt-5.4'] } } } }),
+    );
+    await openclawAdapter.apply(input());
+    expect(readConfig().agents.defaults.model.fallbacks).toEqual(['openai/gpt-5.4']);
   });
 });

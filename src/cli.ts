@@ -46,7 +46,11 @@ program
       'hermes | pi | zed | zcode | jetbrains | copilot-byok',
   )
   .option('--scope <scope>', 'Installation scope: user or local', 'user')
-  .option('--model <model>', 'Model id, or "glm" / "deepseek" shortcuts (default: MiniMax-M2.7; hermes: DeepSeek-V4-Flash)')
+  .option(
+    '--model <model>',
+    'Model id, or "minimax" / "deepseek" / "glm" shortcuts ' +
+      '(default: DeepSeek-V4-Flash where the installer writes the model, MiniMax-M2.7 elsewhere)',
+  )
   .option(
     '--non-interactive',
     'Do not prompt; read the API key from JOINGONKA_API_KEY env var',
@@ -54,7 +58,7 @@ program
   .option('--no-verify', 'Skip the post-setup live check against the gateway')
   .action(async (opts: CliOptions) => {
     try {
-      const { result, verification } = await run(
+      const { result, verification, modelWarning } = await run(
         {
           tool: opts.tool,
           scope: opts.scope,
@@ -73,17 +77,28 @@ program
       if (result.backupPath) {
         console.log(`Backup saved: ${result.backupPath}`);
       }
+      if (modelWarning) {
+        console.warn(`! ${modelWarning}`);
+      }
 
       // Результат live-проверки (если не отключена через --no-verify).
       if (verification) {
         console.log('');
         if (verification.ok) {
           console.log('✓ Verified: the gateway accepted the key, base URL and model.');
+        } else if (verification.outcome === 'unavailable') {
+          // Настройка корректна, занята сеть (или пуст баланс) — это НЕ провал
+          // установки, поэтому выходим с нулевым кодом.
+          console.warn(`! Could not verify right now (${verification.detail}).`);
+          console.warn(
+            '  The config is written and looks correct — this is a temporary ' +
+              'condition on the network side. Check https://gate.joingonka.ai/status',
+          );
         } else {
           console.error(`✗ Verification FAILED (${verification.detail}).`);
           console.error(
             '  The config was written, but a real request did not succeed — ' +
-              'check the API key, your network, and the model id.',
+              'check the API key and the model id.',
           );
           process.exit(2);
         }

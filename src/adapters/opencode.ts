@@ -23,9 +23,10 @@
  * opencode сломан (issues #25991/#5937), а `opencode auth login` интерактивен —
  * запись файлов это единственный надёжный путь авто-настройки в одну команду.
  *
- * Слияние не разрушает чужие данные: другие провайдеры/модели/ключи и
- * пользовательский top-level `model` сохраняются (deepMergeJson; model ставится
- * лишь при отсутствии).
+ * ★ Правки ТОЧЕЧНЫЕ (core/json-config): меняем только свои пути. Чужие
+ * провайдеры, чужие ключи в auth.json, комментарии и форматирование остаются
+ * нетронутыми, а файл, который нельзя разобрать, приводит к отказу без записи
+ * (до 0.4.5 такой файл заменялся свежим — с потерей ключей других провайдеров).
  *
  * Пути переопределяются env: OPENCODE_CONFIG → opencode.json,
  * OPENCODE_AUTH_JSON → auth.json (тесты и нестандартные раскладки XDG).
@@ -41,7 +42,8 @@ import {
   opencodeModelEntry,
 } from '../constants.js';
 import { readRaw, backup, atomicWrite } from '../core/fs-ops.js';
-import { deepMergeJson, isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
+import { readJsonConfig, applyJsonEdits, type JsonEdit } from '../core/json-config.js';
+import { isStaleProviderModelRef, type JsonObject } from '../core/merge.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файлы конфига/ключей — только владелец (rw-------). */
@@ -108,77 +110,81 @@ function buildModels(): JsonObject {
 }
 
 /**
- * Строит opencode.json, не разрушая чужие данные:
- *   - deep-merge нашего провайдера (модели сливаются по id) и $schema;
- *   - apiKey НЕ задаётся (ключ берётся из auth.json по provider-id);
- *   - top-level `model` — только если пользователь ещё не задал свой.
+ * Точечные правки opencode.json: блок нашего провайдера (каталог моделей —
+ * целиком актуальным набором) и top-level `model`.
+ *
+ * `model` пишем, если пользователь задал `--model` явно; иначе — только когда
+ * он пуст или указывает на нашу убранную модель. Чужой выбор не трогаем.
  */
-function buildConfig(existing: JsonObject): JsonObject {
-  const patch: JsonObject = {
-    $schema: 'https://opencode.ai/config.json',
-    provider: {
-      [OPENCODE_PROVIDER_ID]: {
-        npm: OPENCODE_NPM,
-        name: 'JoinGonka (Gonka)',
-        options: {
-          baseURL: BASE_URL_OPENAI,
-        },
-        models: buildModels(),
-      },
-    },
-  };
+function buildEdits(existing: JsonObject, input: ApplyInput): { edits: JsonEdit[]; model: string } {
+  const provider = ['provider', OPENCODE_PROVIDER_ID];
+  const edits: JsonEdit[] = [
+    { path: ['$schema'], value: 'https://opencode.ai/config.json' },
+    { path: [...provider, 'npm'], value: OPENCODE_NPM },
+    { path: [...provider, 'name'], value: 'JoinGonka (Gonka)' },
+    // apiKey в options НЕ пишем: ключ живёт в нативном auth.json.
+    { path: [...provider, 'options', 'baseURL'], value: BASE_URL_OPENAI },
+    { path: [...provider, 'models'], value: buildModels() },
+  ];
 
-  const merged = deepMergeJson(existing, patch);
+  const current = existing.model;
+  const needsReset =
+    typeof current !== 'string' ||
+    current.trim() === '' ||
+    isStaleProviderModelRef(current, OPENCODE_PROVIDER_ID, CANONICAL_IDS);
 
-  // Наш провайдер — единственный источник правды по СВОЕМУ каталогу: заменяем
-  // models ЦЕЛИКОМ актуальным набором, чтобы убрать устаревшие модели (напр. Qwen),
-  // оставшиеся от прошлых версий установщика. deepMergeJson сливает объект models
-  // по ключам и сам старые id не удалил бы.
-  const ourProvider = asObject(asObject(merged.provider)?.[OPENCODE_PROVIDER_ID]);
-  if (ourProvider) ourProvider.models = buildModels();
-
-  // top-level `model`: наш дефолт, если не задан ИЛИ указывает на нашу убранную
-  // модель (иначе opencode сошлётся на несуществующую). Пользовательский дефолт на
-  // чужой провайдер (anthropic/…) или на актуальную нашу модель — НЕ трогаем.
-  if (
-    typeof merged.model !== 'string' ||
-    (merged.model as string).trim() === '' ||
-    isStaleProviderModelRef(merged.model, OPENCODE_PROVIDER_ID, CANONICAL_IDS)
-  ) {
-    merged.model = OPENCODE_DEFAULT_MODEL;
+  let model: string;
+  if (input.modelExplicit) {
+    model = `${OPENCODE_PROVIDER_ID}/${input.model}`;
+    edits.push({ path: ['model'], value: model });
+  } else if (needsReset) {
+    model = OPENCODE_DEFAULT_MODEL;
+    edits.push({ path: ['model'], value: model });
+  } else {
+    model = current as string;
   }
 
-  return merged;
+  return { edits, model };
 }
 
 /**
- * Строит auth.json: добавляет наш ключ под provider-id, сохраняя чужие записи.
- * Формат opencode для API-ключа: { "<id>": { "type": "api", "key": "<ключ>" } }.
+ * Правка auth.json: добавляем наш ключ под provider-id, не касаясь чужих
+ * записей. Формат opencode: { "<id>": { "type": "api", "key": "<ключ>" } }.
  */
-function buildAuth(existing: JsonObject, apiKey: string): JsonObject {
-  return deepMergeJson(existing, {
-    [OPENCODE_PROVIDER_ID]: { type: 'api', key: apiKey },
-  });
+function buildAuthEdits(apiKey: string): JsonEdit[] {
+  return [
+    { path: [OPENCODE_PROVIDER_ID, 'type'], value: 'api' },
+    { path: [OPENCODE_PROVIDER_ID, 'key'], value: apiKey },
+  ];
 }
 
 async function apply(input: ApplyInput): Promise<ApplyResult> {
-  // 1) opencode.json — провайдер (без apiKey).
+  // 1) opencode.json — провайдер (без apiKey). Читаем ДО бэкапа: неразбираемый
+  //    конфиг означает отказ, и тогда диск не трогаем вовсе.
   const configPath = resolvePath(input.scope);
-  const configBackup = backup(configPath);
-  const config = buildConfig(parseObject(readRaw(configPath)));
-  await atomicWrite(configPath, JSON.stringify(config, null, 2) + '\n', OWNER_ONLY_MODE);
+  const configDoc = readJsonConfig(readRaw(configPath), configPath);
 
-  // 2) auth.json — ключ в нативном хранилище opencode (как `opencode auth login`).
+  // 2) auth.json — ключ в нативном хранилище opencode. Тоже читаем заранее:
+  //    в нём лежат ключи ДРУГИХ провайдеров пользователя.
   const authPath = resolveAuthPath();
+  const authDoc = readJsonConfig(readRaw(authPath), authPath);
+
+  const configBackup = backup(configPath);
+  const { edits, model } = buildEdits(configDoc.value, input);
+  await atomicWrite(configPath, applyJsonEdits(configDoc.text, edits), OWNER_ONLY_MODE);
+
   const authBackup = backup(authPath);
-  const auth = buildAuth(parseObject(readRaw(authPath)), input.apiKey);
-  await atomicWrite(authPath, JSON.stringify(auth, null, 2) + '\n', OWNER_ONLY_MODE);
+  await atomicWrite(
+    authPath,
+    applyJsonEdits(authDoc.text, buildAuthEdits(input.apiKey)),
+    OWNER_ONLY_MODE,
+  );
 
   const messages = [
     `Configured provider in ${configPath}`,
     `Stored API key in ${authPath} (opencode native store — same as \`opencode auth login\`)`,
     `Base URL: ${BASE_URL_OPENAI}`,
-    `Default model: ${OPENCODE_DEFAULT_MODEL}`,
+    `Default model: ${model}`,
     '',
     'No environment variables changed — your other OpenAI-compatible tools are left untouched.',
     'Restart opencode to pick up the new provider.',
