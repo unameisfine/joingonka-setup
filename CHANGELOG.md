@@ -119,6 +119,8 @@ Ten more tools — 25 in total — and a round of fixes found while integrating 
 
 ## [0.4.5] - 2026-09-21
 
+_Not published to npm on its own: it shipped as part of 0.5.0._
+
 A safety release. An audit showed a class of defects where the installer could
 silently damage a working setup: a config with a comment in it was replaced by a
 fresh one, `--model` did not reach the tool, and Claude Code was never told the
