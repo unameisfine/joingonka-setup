@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Dates are npm publish dates (UTC).
 
+## [Unreleased]
+
+### Fixed
+
+- **Zoo Code:** the printed instructions no longer send you to a "Model Configuration"
+  block — the Zoo Code form has none. The limits are entered further down the same
+  form, and they are now printed in the form's order (Max Output Tokens, then Context
+  Window Size). The instructions also warn that the form pre-fills Model with `gpt-4o`,
+  which the gateway rejects.
+
 ## [0.5.0] - 2026-09-21
 
 Ten more tools — 25 in total — and a round of fixes found while integrating them.

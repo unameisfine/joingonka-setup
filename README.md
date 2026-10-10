@@ -43,7 +43,7 @@ That's it. The installer asks which tool to set up and for your API key (`jg-...
 | Aider | `aider` | instructions | prints a `.aider.conf.yml` block (env exports only as a one-off alternative) | you paste it | MiniMax M2.7 |
 | Copilot BYOK | `copilot-byok` | instructions | three sections — VS Code, Copilot CLI, JetBrains — see [GitHub Copilot BYOK](#github-copilot-byok) | you paste it | MiniMax M2.7 |
 | JetBrains | `jetbrains` | instructions (UI) | prints the values for AI Assistant providers | you paste it | MiniMax M2.7 |
-| Zoo Code | `zoo` | instructions (UI) | the community successor of Roo Code: prints the values for API Provider → OpenAI Compatible and the model limits for Model Configuration | you paste it | MiniMax M2.7 |
+| Zoo Code | `zoo` | instructions (UI) | the community successor of Roo Code: prints the values for API Provider → OpenAI Compatible and the model limits to enter further down the same form | you paste it | MiniMax M2.7 |
 | MiMo Code | `mimo-code` | JSONC | `~/.config/mimocode/mimocode.jsonc`, or the existing global config MiMo Code writes to itself (`MIMOCODE_HOME`, `XDG_*` honoured) | native `auth.json`, `600` | DeepSeek V4 Flash |
 | MiniMax Code | `minimax-code` | YAML | `~/.minimax/config.yaml` (`MINIMAX_DATA_DIR` honoured) — `custom_provider.joingonka`, `defaultModel` | in the file, `600` | DeepSeek V4 Flash |
 | ZCode | `zcode` | instructions (UI) | prints the values for Settings → Model Settings | you paste it | MiniMax M2.7 |

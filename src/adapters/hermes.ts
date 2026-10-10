@@ -12,7 +12,8 @@
  * Что прописываем (кастомный OpenAI-совместимый endpoint):
  *   model:
  *     provider: custom
- *     model: <выбранная модель>            # reconcile: старое значение перезаписывается
+ *     default: <выбранная модель>          # канонический ключ Hermes; `model.model` — лишь
+ *                                          # запасной псевдоним и не действует при заданном default
  *     base_url: BASE_URL_OPENAI            # С /v1 — Hermes сам дописывает /chat/completions
  *     api_key: <литеральный ключ jg-...>
  *

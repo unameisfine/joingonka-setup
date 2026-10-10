@@ -4,8 +4,9 @@
  * Zoo Code — преемник Roo Code; провайдер настраивается в UI расширения
  * (API Provider → OpenAI Compatible), ключ уходит в SecretStorage VS Code —
  * файл не пишем. Проверяем: resolvePath→null, wrote:false; поля провайдера
- * (Base URL с /v1, ключ, модель); РЕАЛЬНЫЕ лимиты выбранной модели для блока
- * Model Configuration; в tmp-HOME ничего не появляется.
+ * (Base URL с /v1, ключ, модель); РЕАЛЬНЫЕ лимиты выбранной модели — в порядке
+ * формы Zoo, без несуществующего заголовка «Model Configuration»; в tmp-HOME
+ * ничего не появляется.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
@@ -82,6 +83,25 @@ describe('zooAdapter', () => {
     const glm = (await zooAdapter.apply({ ...input, model: GLM_MODEL })).messages;
     expect(glm).toContain('  Context Window Size: 390000');
     expect(glm).toContain('  Max Output Tokens:   8192');
+  });
+
+  // Живой прогон Zoo Code 3.82.2 (23.09.2026): блока с заголовком «Model Configuration»
+  // в форме нет — поля лимитов стоят ниже в той же форме, причём Max Output Tokens
+  // раньше Context Window Size; поле Model форма заранее заполняет gpt-4o.
+  it('points at the real form: no "Model Configuration" heading, limits in the form order', async () => {
+    const { messages } = await zooAdapter.apply({ ...input, model: DEEPSEEK_MODEL });
+    const text = messages.join('\n');
+    expect(text).not.toContain('Model Configuration');
+    expect(text).toContain('further down the same form');
+    const output = messages.indexOf('  Max Output Tokens:   32768');
+    const context = messages.indexOf('  Context Window Size: 380000');
+    expect(output).toBeGreaterThan(-1);
+    expect(context).toBeGreaterThan(output);
+  });
+
+  it('warns that the form pre-fills Model with gpt-4o', async () => {
+    const { messages } = await zooAdapter.apply(input);
+    expect(messages.join('\n')).toContain('gpt-4o');
   });
 
   it('tells the user to leave image support off and mentions native tool calling', async () => {
