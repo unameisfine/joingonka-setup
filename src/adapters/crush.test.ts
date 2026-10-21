@@ -155,7 +155,7 @@ describe('crushAdapter.apply — блок провайдера', () => {
     expect(deepseek.supports_attachments).toBe(false);
 
     const minimax = models.find((m: any) => m.id === DEFAULT_MODEL);
-    expect(minimax.context_window).toBe(200000);
+    expect(minimax.context_window).toBe(180000);
     expect(minimax.default_max_tokens).toBe(8192);
     expect(minimax.can_reason).toBe(false);
     // Без reasoning_levels Crush не добавляет в запрос reasoning_effort.
@@ -287,7 +287,7 @@ describe('crushAdapter.apply — модели large и small', () => {
     await crushAdapter.apply({ ...input, model: 'vendor/brand-new', modelExplicit: true });
     const cfg = readConfig();
     const extra = cfg.providers.joingonka.models.find((m: any) => m.id === 'vendor/brand-new');
-    expect(extra.context_window).toBe(200000);
+    expect(extra.context_window).toBe(180000);
     expect(extra.default_max_tokens).toBe(8192);
     expect(cfg.models.large).toEqual(OURS('vendor/brand-new'));
   });

@@ -104,7 +104,7 @@ describe('droidAdapter.apply — чистая установка', () => {
       maxContextLimit: 380000,
       noImageSupport: true,
     });
-    expect(models[0].maxContextLimit).toBe(200000);
+    expect(models[0].maxContextLimit).toBe(180000);
     expect(models[2].maxOutputTokens).toBe(8192);
     expect(result.wrote).toBe(true);
     expect(result.configPath).toBe(settingsPath);
@@ -150,7 +150,7 @@ describe('droidAdapter.apply — golden: формат файла закрепл�
       "apiKey": "jg-test123",
       "provider": "generic-chat-completion-api",
       "maxOutputTokens": 8192,
-      "maxContextLimit": 200000,
+      "maxContextLimit": 180000,
       "noImageSupport": true
     },
     {
@@ -372,7 +372,7 @@ describe('droidAdapter.apply — явная модель', () => {
     const extra = s.customModels.find((m: any) => m.model === 'vendor/brand-new');
     expect(extra.id).toBe('custom:vendor/brand-new');
     expect(extra.maxOutputTokens).toBe(8192);
-    expect(extra.maxContextLimit).toBe(200000);
+    expect(extra.maxContextLimit).toBe(180000);
     expect(s.sessionDefaultSettings.model).toBe('custom:vendor/brand-new');
   });
 });

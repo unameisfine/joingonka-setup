@@ -141,7 +141,7 @@ describe('piAdapter.apply — provider block', () => {
     const byId = new Map(models.map((m) => [m.id, m]));
 
     expect(models).toHaveLength(3);
-    expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.contextWindow).toBe(200000);
+    expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.contextWindow).toBe(180000);
     expect(byId.get('MiniMaxAI/MiniMax-M2.7')?.maxTokens).toBe(8192);
     // GLM-5.3 Flash — контекст 390K (замер 16.09.2026), выдача на общем клипе 8192
     expect(byId.get('zai-org/GLM-5.3-Flash')?.contextWindow).toBe(390000);

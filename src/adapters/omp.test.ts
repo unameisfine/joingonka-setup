@@ -168,7 +168,7 @@ describe('ompAdapter.apply — provider block (models.yml)', () => {
     const byId = Object.fromEntries(models.map((m) => [m.id, m]));
 
     expect(Object.keys(byId).sort()).toEqual([DEEPSEEK_MODEL, DEFAULT_MODEL, GLM_MODEL].sort());
-    expect(byId[DEFAULT_MODEL].contextWindow).toBe(200000);
+    expect(byId[DEFAULT_MODEL].contextWindow).toBe(180000);
     expect(byId[DEFAULT_MODEL].maxTokens).toBe(8192);
     expect(byId[DEEPSEEK_MODEL].contextWindow).toBe(380000);
     expect(byId[DEEPSEEK_MODEL].maxTokens).toBe(32768);

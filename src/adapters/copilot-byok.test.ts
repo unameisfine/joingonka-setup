@@ -131,7 +131,7 @@ describe('copilotByokAdapter', () => {
       expect(entry.maxInputTokens + entry.maxOutputTokens).toBe(context);
     }
     // Контрольные числа — чтобы формула не «позеленела» вместе с ошибкой в ней
-    expect(models.find((m) => m.id === DEFAULT_MODEL)!.maxInputTokens).toBe(191808);
+    expect(models.find((m) => m.id === DEFAULT_MODEL)!.maxInputTokens).toBe(171808);
     expect(models.find((m) => m.id === DEEPSEEK_MODEL)!.maxInputTokens).toBe(347232);
     expect(models.find((m) => m.id === DEEPSEEK_MODEL)!.maxOutputTokens).toBe(32768);
     expect(models.find((m) => m.id === GLM_MODEL)!.maxInputTokens).toBe(381808);
@@ -143,7 +143,7 @@ describe('copilotByokAdapter', () => {
     expect(messages).toContain('  export COPILOT_PROVIDER_TYPE=openai');
     expect(messages).toContain('  export COPILOT_PROVIDER_API_KEY=jg-test123');
     expect(messages).toContain(`  export COPILOT_MODEL=${DEFAULT_MODEL}`);
-    expect(messages).toContain('  export COPILOT_PROVIDER_MAX_PROMPT_TOKENS=191808');
+    expect(messages).toContain('  export COPILOT_PROVIDER_MAX_PROMPT_TOKENS=171808');
     expect(messages).toContain('  export COPILOT_PROVIDER_MAX_OUTPUT_TOKENS=8192');
     // Глобальные env за пользователя не персистим — и говорим об этом прямо
     expect(messages.join('\n')).toContain('shell profile');
@@ -173,7 +173,7 @@ describe('copilotByokAdapter', () => {
 
   it('prints the real limits of the selected model', async () => {
     const minimax = (await copilotByokAdapter.apply(input)).messages.join('\n');
-    expect(minimax).toContain('context window 200000');
+    expect(minimax).toContain('context window 180000');
     expect(minimax).toContain('max output 8192');
 
     const deepseek = (
@@ -202,7 +202,7 @@ describe('copilotByokAdapter', () => {
     expect(models[0]!.id).toBe(custom);
     // Остальной каталог никуда не девается
     expect(models).toHaveLength(OPENCLAW_MODELS.length + 1);
-    // Консервативные значения: общий контекст сети и минимальный потолок выдачи
+    // Консервативные значения: наименьшие по каталогу окно и потолок выдачи
     const minOutput = Math.min(...OPENCLAW_MODELS.map((m) => m.maxTokens));
     expect(models[0]!.maxOutputTokens).toBe(minOutput);
     expect(models[0]!.maxInputTokens + models[0]!.maxOutputTokens).toBe(OPENCLAW_CONTEXT_WINDOW);

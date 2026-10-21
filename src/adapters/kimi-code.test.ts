@@ -81,7 +81,7 @@ function modelBlock(model: string, context: number, output: number, caps: string
 }
 
 const OUR_MODELS = [
-  ...modelBlock(DEFAULT_MODEL, 200000, 8192, '["tool_use"]', 'MiniMax M2.7 (Gonka)'),
+  ...modelBlock(DEFAULT_MODEL, 180000, 8192, '["tool_use"]', 'MiniMax M2.7 (Gonka)'),
   '',
   ...modelBlock(
     'deepseek-ai/DeepSeek-V4-Flash-0731',
@@ -264,7 +264,7 @@ describe('kimiCodeAdapter.apply — чужой конфиг', () => {
     expect(config.models[alias('vendor/brand-new')]).toEqual({
       provider: 'joingonka',
       model: 'vendor/brand-new',
-      max_context_size: 200000,
+      max_context_size: 180000,
       max_output_size: 8192,
       capabilities: ['tool_use'],
       display_name: 'vendor/brand-new',

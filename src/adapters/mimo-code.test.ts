@@ -139,7 +139,7 @@ describe('mimoCodeAdapter.apply — блок провайдера', () => {
   it('writes the catalog with real limits, tool_call and reasoning flags', async () => {
     await mimoCodeAdapter.apply(input);
     const models = readConfig().provider.joingonka.models;
-    expect(models['MiniMaxAI/MiniMax-M2.7'].limit).toEqual({ context: 200000, output: 8192 });
+    expect(models['MiniMaxAI/MiniMax-M2.7'].limit).toEqual({ context: 180000, output: 8192 });
     expect(models['deepseek-ai/DeepSeek-V4-Flash-0731'].limit).toEqual({
       context: 380000,
       output: 32768,
@@ -275,7 +275,7 @@ describe('mimoCodeAdapter.apply — модель по умолчанию', () =>
     const cfg = readConfig();
     expect(cfg.model).toBe('joingonka/vendor/brand-new');
     expect(cfg.provider.joingonka.models['vendor/brand-new'].limit).toEqual({
-      context: 200000,
+      context: 180000,
       output: 8192,
     });
   });

@@ -215,7 +215,8 @@ export const hermesAdapter: Adapter = {
   format: 'yaml',
   // Hermes — автономный агент: длинная история tool-calling, память, планировщик.
   // Ему нужнее контекст и потолок ответа, чем универсальность DEFAULT_MODEL:
-  // DeepSeek V4 Flash даёт 380K и 32768 против 200K и 8192 у остальных моделей сети.
+  // у DeepSeek V4 Flash окно 380K и потолок ответа 32768, у MiniMax — 180K и 8192,
+  // у GLM окно длиннее (390K), но ответ тоже не больше 8192.
   defaultModel: DEEPSEEK_MODEL,
   resolvePath,
   apply,

@@ -144,11 +144,11 @@ describe('openclawAdapter.apply — provider block', () => {
     // 32768 (замер 17.08.2026, SSOT model-specs.ts + live /v1/models).
     expect(byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')?.maxTokens).toBe(32768);
 
-    // Форма записи модели + общий контекст сети (200K) на примере MiniMax
+    // Форма записи модели на примере MiniMax: окно 180K — on-chain --max-model-len хостов
     const minimax = byId.get('MiniMaxAI/MiniMax-M2.7')!;
     expect(minimax.name).toBe('MiniMax M2.7 (Gonka)');
     expect(minimax.input).toEqual(['text']);
-    expect(minimax.contextWindow).toBe(200000);
+    expect(minimax.contextWindow).toBe(180000);
     expect(minimax.cost).toEqual({
       input: 0.0062,
       output: 0.0185,
@@ -156,7 +156,7 @@ describe('openclawAdapter.apply — provider block', () => {
       cacheWrite: 0.0062,
     });
 
-    // Пер-модельный контекст: DeepSeek 380K (замер 13.08.2026), не общий 200K
+    // Пер-модельный контекст: DeepSeek 380K (замер 13.08.2026), не окно MiniMax
     const deepseek = byId.get('deepseek-ai/DeepSeek-V4-Flash-0731')!;
     expect(deepseek.name).toBe('DeepSeek V4 Flash (Gonka)');
     expect(deepseek.contextWindow).toBe(380000);

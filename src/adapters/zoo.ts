@@ -54,7 +54,7 @@ function resolvePath(_scope: Scope): string | null {
 async function apply(input: ApplyInput): Promise<ApplyResult> {
   // Лимиты — из каталога пакета. Незнакомый id `вендор/модель` разбор моделей
   // пропускает с предупреждением; для него берём консервативные значения:
-  // общий контекст сети и наименьший потолок выдачи по каталогу.
+  // наименьшие по каталогу окно (запасное OPENCLAW_CONTEXT_WINDOW) и потолок выдачи.
   const spec = OPENCLAW_MODELS.find((m) => m.id === input.model);
   const contextWindow = spec?.contextWindow ?? OPENCLAW_CONTEXT_WINDOW;
   const maxOutput = spec?.maxTokens ?? Math.min(...OPENCLAW_MODELS.map((m) => m.maxTokens));

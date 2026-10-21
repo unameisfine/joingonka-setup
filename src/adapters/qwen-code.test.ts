@@ -129,7 +129,7 @@ describe('qwenCodeAdapter.apply — чистая установка', () => {
     expect(deepseek.name).toBe('DeepSeek V4 Flash (Gonka)');
     expect(deepseek.generationConfig.contextWindowSize).toBe(380000);
     expect(deepseek.generationConfig.samplingParams.max_tokens).toBe(32768);
-    expect(models[0].generationConfig.contextWindowSize).toBe(200000);
+    expect(models[0].generationConfig.contextWindowSize).toBe(180000);
     expect(models[2].generationConfig.samplingParams.max_tokens).toBe(8192);
   });
 
@@ -401,7 +401,7 @@ describe('qwenCodeAdapter.apply — модель по умолчанию', () =>
     const extra = s.modelProviders.openai.find((m: any) => m.id === 'vendor/brand-new');
     expect(extra.baseUrl).toBe(GATE);
     expect(extra.generationConfig).toEqual({
-      contextWindowSize: 200000,
+      contextWindowSize: 180000,
       samplingParams: { max_tokens: 8192 },
     });
     expect(s.model.name).toBe('vendor/brand-new');

@@ -204,7 +204,7 @@ describe('gooseAdapter.apply — файл провайдера (custom_providers
     const byName = Object.fromEntries(models.map((m) => [m.name, m]));
 
     expect(Object.keys(byName).sort()).toEqual([DEEPSEEK_MODEL, DEFAULT_MODEL, GLM_MODEL].sort());
-    expect(byName[DEFAULT_MODEL].context_limit).toBe(200000);
+    expect(byName[DEFAULT_MODEL].context_limit).toBe(180000);
     expect(byName[DEEPSEEK_MODEL].context_limit).toBe(380000);
     expect(byName[GLM_MODEL].context_limit).toBe(390000);
     // У ModelInfo Goose нет поля потолка выдачи — не выдумываем его.

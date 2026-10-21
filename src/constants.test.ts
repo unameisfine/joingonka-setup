@@ -7,6 +7,7 @@ import {
   DEEPSEEK_MODEL,
   DEFAULT_MODEL,
   GLM_MODEL,
+  OPENCLAW_CONTEXT_WINDOW,
   OPENCLAW_MODELS,
   formatModelLimits,
   isRecordedPrice,
@@ -84,19 +85,35 @@ describe('запись модели: живая цена не затираетс
 
 describe('modelLimits — лимиты для печатных инструкций', () => {
   it('отдаёт реальные окно и потолок ответа каждой модели каталога', () => {
-    expect(modelLimits(DEFAULT_MODEL)).toEqual({ contextWindow: 200000, maxOutput: 8192, known: true });
+    // MiniMax — 180000: on-chain --max-model-len хостов (вход + ответ вместе), до 0.5.1 было 200000.
+    expect(modelLimits(DEFAULT_MODEL)).toEqual({ contextWindow: 180000, maxOutput: 8192, known: true });
     expect(modelLimits(DEEPSEEK_MODEL)).toEqual({ contextWindow: 380000, maxOutput: 32768, known: true });
     expect(modelLimits(GLM_MODEL)).toEqual({ contextWindow: 390000, maxOutput: 8192, known: true });
   });
 
   it('для модели вне каталога — осторожные значения и known:false', () => {
-    // Общий контекст сети и наименьший потолок по каталогу: занизить безопаснее,
+    // Наименьшие по каталогу окно и потолок ответа: занизить безопаснее,
     // чем пообещать инструменту окно, которого у модели нет.
     expect(modelLimits('newvendor/Model-X')).toEqual({
-      contextWindow: 200000,
+      contextWindow: 180000,
       maxOutput: 8192,
       known: false,
     });
+  });
+
+  // ★ До 0.5.1 одна константа значила две вещи — окно MiniMax и запасное окно для
+  // незнакомой модели. Когда окно MiniMax оказалось меньше (180000, а не 200000),
+  // это пришлось бы помнить в двух местах. Теперь у каждой модели каталога окно своё,
+  // а запасное выводится из каталога.
+  it('у каждой модели каталога окно задано явно — запасное достаётся только id вне каталога', () => {
+    for (const spec of OPENCLAW_MODELS) {
+      expect(spec.contextWindow, spec.id).toEqual(expect.any(Number));
+    }
+  });
+
+  it('запасное окно — наименьшее окно каталога, а не окно какой-то одной модели', () => {
+    expect(OPENCLAW_CONTEXT_WINDOW).toBe(Math.min(...OPENCLAW_MODELS.map((m) => m.contextWindow)));
+    expect(OPENCLAW_CONTEXT_WINDOW).toBe(180000);
   });
 
   it('formatModelLimits печатает одну строку с обоими числами', () => {

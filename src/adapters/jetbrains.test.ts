@@ -73,7 +73,7 @@ describe('jetbrainsAdapter', () => {
 
   it('gives the context window to enter (the IDE default is 64000)', async () => {
     const joined = (await jetbrainsAdapter.apply(input)).messages.join('\n');
-    expect(joined).toMatch(/Context window:\s+200000/);
+    expect(joined).toMatch(/Context window:\s+180000/);
     expect(joined).toContain('8192');
   });
 

@@ -75,7 +75,7 @@ describe('cursorAdapter', () => {
 
   it('prints the real limits of the chosen model', async () => {
     const joined = (await cursorAdapter.apply(input)).messages.join('\n');
-    expect(joined).toContain('context window 200000 tokens, max output 8192 tokens');
+    expect(joined).toContain('context window 180000 tokens, max output 8192 tokens');
   });
 
   it('creates no files in the tmp HOME', async () => {

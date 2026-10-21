@@ -8,9 +8,10 @@
  * инструментов с каталогом провайдера (opencode, Kilo, OpenClaw, Pi, Zed, Crush,
  * Droid, …) модель, которой в каталоге НЕТ, не находится вовсе — дефолт молча
  * отбрасывается либо сессия падает с «model not found». Поэтому такая модель
- * попадает и в каталог — с ОСТОРОЖНЫМИ лимитами: окно по умолчанию и наименьший
- * потолок ответа по каталогу (занизить безопаснее, чем пообещать инструменту окно,
- * которого у модели нет, — он перестанет вовремя сжимать историю).
+ * попадает и в каталог — с ОСТОРОЖНЫМИ лимитами: наименьшие по каталогу окно
+ * (запасное OPENCLAW_CONTEXT_WINDOW) и потолок ответа (занизить безопаснее, чем
+ * пообещать инструменту окно, которого у модели нет, — он перестанет вовремя
+ * сжимать историю).
  *
  * ★ До второй части 0.5.0 функция жила пятью копиями в новых адаптерах, а старые
  * (opencode, kilo, openclaw, pi, zed) её не имели вовсе — у них `--model <новый id>`
@@ -40,9 +41,9 @@ function conservativeMaxTokens(): number {
 
 /** Модели, которые эта установка пишет в каталог провайдера (см. шапку модуля). */
 export function catalogFor(input: CatalogInput): OpenClawModelSpec[] {
-  const specs = [...OPENCLAW_MODELS];
+  const specs: OpenClawModelSpec[] = [...OPENCLAW_MODELS];
   if (input.modelExplicit && !NETWORK_MODEL_IDS.includes(input.model)) {
-    // `contextWindow` не задаём: адаптеры подставят окно по умолчанию.
+    // `contextWindow` не задаём: адаптеры подставят запасное — наименьшее окно каталога.
     specs.push({ id: input.model, name: input.model, maxTokens: conservativeMaxTokens() });
   }
   return specs;

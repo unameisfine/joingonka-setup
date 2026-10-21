@@ -6,10 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Dates are npm publish dates (UTC).
 
-## [Unreleased]
+## [0.5.1] - 2026-10-21
 
 ### Fixed
 
+- **MiniMax M2.7: the context window is 180,000 tokens**, the limit the Gonka hosts
+  serve (prompt and output together). The installer wrote 200,000, so a tool kept
+  growing the history past what the network accepts, and requests with roughly 172K
+  to 200K tokens of input failed instead of being compacted. Re-run the installer: it
+  lowers the window in the config it wrote. For a tool set up from printed
+  instructions, the new numbers are printed the same way — enter them by hand. A
+  model from outside the installer's catalog now gets the smallest window in the
+  catalog — also 180,000 — instead of 200,000.
 - **Zoo Code:** the printed instructions no longer send you to a "Model Configuration"
   block — the Zoo Code form has none. The limits are entered further down the same
   form, and they are now printed in the form's order (Max Output Tokens, then Context

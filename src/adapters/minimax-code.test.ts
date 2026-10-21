@@ -145,7 +145,7 @@ describe('minimaxCodeAdapter.apply — provider block (custom_provider.joingonka
     const models = readConfig().custom_provider.joingonka.models;
 
     expect(Object.keys(models).sort()).toEqual([DEEPSEEK_MODEL, DEFAULT_MODEL, GLM_MODEL].sort());
-    expect(models[DEFAULT_MODEL].limit).toEqual({ context: 200000, output: 8192 });
+    expect(models[DEFAULT_MODEL].limit).toEqual({ context: 180000, output: 8192 });
     expect(models[DEEPSEEK_MODEL].limit).toEqual({ context: 380000, output: 32768 });
     expect(models[GLM_MODEL].limit).toEqual({ context: 390000, output: 8192 });
     expect(models[DEEPSEEK_MODEL].name).toBe('DeepSeek V4 Flash (Gonka)');

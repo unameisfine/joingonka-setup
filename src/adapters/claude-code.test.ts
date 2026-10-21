@@ -194,7 +194,7 @@ describe('claudeCodeAdapter.apply — модель и окно контекст�
     expect(readEnv().CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('32768');
 
     await claudeCodeAdapter.apply({ ...input('user'), model: DEFAULT_MODEL });
-    expect(readEnv().CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('200000');
+    expect(readEnv().CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('180000');
     expect(readEnv().CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('8192');
   });
 

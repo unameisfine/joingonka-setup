@@ -69,7 +69,7 @@ describe('zooAdapter', () => {
     expect(messages).toContain(`  Model:        ${DEFAULT_MODEL}`);
   });
 
-  it('prints the real limits of the selected model for Model Configuration', async () => {
+  it('prints the real limits of the selected model', async () => {
     for (const spec of OPENCLAW_MODELS) {
       const { messages } = await zooAdapter.apply({ ...input, model: spec.id });
       const context = spec.contextWindow ?? OPENCLAW_CONTEXT_WINDOW;
@@ -77,6 +77,9 @@ describe('zooAdapter', () => {
       expect(messages).toContain(`  Max Output Tokens:   ${spec.maxTokens}`);
     }
     // Контрольные числа — чтобы цикл выше не «позеленел» вместе с каталогом
+    const minimax = (await zooAdapter.apply(input)).messages;
+    expect(minimax).toContain('  Context Window Size: 180000');
+    expect(minimax).toContain('  Max Output Tokens:   8192');
     const deepseek = (await zooAdapter.apply({ ...input, model: DEEPSEEK_MODEL })).messages;
     expect(deepseek).toContain('  Context Window Size: 380000');
     expect(deepseek).toContain('  Max Output Tokens:   32768');

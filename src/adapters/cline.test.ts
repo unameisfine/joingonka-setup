@@ -94,7 +94,7 @@ describe('clineAdapter.apply — поля формы по исходнику Cli
     const text = await run();
     expect(text).not.toMatch(/verify/i);
     expect(text).toContain('Model Configuration');
-    expect(text).toMatch(/Context Window Size:\s+200000/);
+    expect(text).toMatch(/Context Window Size:\s+180000/);
     expect(text).toMatch(/Max Output Tokens:\s+8192/);
     expect(text).toMatch(/Supports Images:\s+off/);
   });

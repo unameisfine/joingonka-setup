@@ -98,19 +98,18 @@ export interface OpenClawModelSpec {
   name: string;
   maxTokens: number;
   aliasFor?: string;
-  /** Окно контекста модели; если не задано — OPENCLAW_CONTEXT_WINDOW (200K, как у MiniMax). */
+  /**
+   * Окно контекста модели: вход и ответ вместе. У моделей каталога задано всегда
+   * (OPENCLAW_MODELS); нет его только у id вне каталога (core/catalog.ts) — тогда
+   * адаптеры берут запасное OPENCLAW_CONTEXT_WINDOW.
+   */
   contextWindow?: number;
   /** Модель отдаёт reasoning-контент (Kilo помечает `reasoning:true`). */
   reasoning?: boolean;
 }
 
-/**
- * Контекст по умолчанию — окно MiniMax, 200000 (замер: вход 200 011 токенов
- * принят, HTTP 200). Это НЕ «общее окно сети»: у DeepSeek V4 Flash 380000, у
- * GLM-5.3 Flash 390000 — они заданы пер-модельно в OPENCLAW_MODELS. Сюда падает
- * только модель без собственного значения и id вне каталога.
- */
-export const OPENCLAW_CONTEXT_WINDOW = 200000;
+/** Модель каталога сети: окно у неё задано явно, своё (запасное — не для неё). */
+type NetworkModelSpec = OpenClawModelSpec & { contextWindow: number };
 
 /** Цена модели, $ за 1M токенов: вход и выход. */
 export interface ModelPrice {
@@ -182,7 +181,8 @@ function modelCost(price?: ModelPrice, recorded?: unknown): unknown {
  * SSOT по id и лимитам — gateway/src/modules/network-status/model-specs.ts;
  * здесь РУЧНОЙ дубль, поэтому при каждом релизе сверять с живым
  * GET https://gate.joingonka.ai/v1/models (`context_length`,
- * `top_provider.max_completion_tokens`). Сверено 21.09.2026 — совпадает.
+ * `top_provider.max_completion_tokens`). Сверено 21.10.2026: состав, DeepSeek и
+ * GLM совпадают; окно MiniMax исправлено на 180000 вместе с model-specs.ts шлюза.
  *
  * Потолок ответа у моделей РАЗНЫЙ: MiniMax и GLM — 8192, DeepSeek — 32768.
  * Кто из них primary у конкретного инструмента — решают CODING_AGENT_DEFAULT_MODEL
@@ -195,10 +195,20 @@ function modelCost(price?: ModelPrice, recorded?: unknown): unknown {
  * (client-side); серверный web_search шлюза включается per-request, отдельные
  * модель-варианты для него не нужны.
  */
-export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
-  // Окно 200000 (общее значение по умолчанию), потолок ответа 8192 — замер:
-  // на 8192 ответ обрывается с finish_reason:length. Самая ёмкая модель сети.
-  { id: 'MiniMaxAI/MiniMax-M2.7', name: 'MiniMax M2.7 (Gonka)', maxTokens: 8192, aliasFor: 'minimax-m2.7' },
+export const OPENCLAW_MODELS: readonly NetworkModelSpec[] = [
+  // Окно 180000 — on-chain `--max-model-len` хостов: нода считает вход вместе с
+  // max_tokens и сверх окна отвечает «maximum context length is 180000 tokens»
+  // (сверено 21.10.2026). До 0.5.1 стояло 200000 по ошибочному замеру: вход
+  // 200 011 токенов с HTTP 200 приняла Kimi, а у MiniMax тогда был таймаут
+  // Cloudflare. Потолок ответа 8192 — замер: на 8192 ответ обрывается с
+  // finish_reason:length. Самая ёмкая модель сети.
+  {
+    id: 'MiniMaxAI/MiniMax-M2.7',
+    name: 'MiniMax M2.7 (Gonka)',
+    maxTokens: 8192,
+    aliasFor: 'minimax-m2.7',
+    contextWindow: 180000,
+  },
   // Окно 380000 — замер на проде 13.08.2026 (вход 381K токенов принят).
   // Потолок ответа 32768 — самый высокий в сети (замер 17.08.2026).
   {
@@ -223,6 +233,17 @@ export const OPENCLAW_MODELS: readonly OpenClawModelSpec[] = [
     reasoning: true,
   },
 ];
+
+/**
+ * Запасное окно контекста — для модели без своего значения, то есть для id вне
+ * каталога (явный `--model` с моделью, которой установщик ещё не знает,
+ * core/catalog.ts). Берётся НАИМЕНЬШЕЕ окно каталога: занизить безопаснее, чем
+ * пообещать инструменту окно, которого у модели может не быть, — он перестанет
+ * вовремя сжимать историю и получит отказ ноды. Это не «окно MiniMax» и не
+ * «общее окно сети»: сейчас оно совпадает с MiniMax (180000) лишь потому, что её
+ * окно в каталоге наименьшее. Имя историческое — по первому потребителю, OpenClaw.
+ */
+export const OPENCLAW_CONTEXT_WINDOW = Math.min(...OPENCLAW_MODELS.map((m) => m.contextWindow));
 
 /**
  * Модель по умолчанию (primary) для OpenClaw в формате провайдер-ref
@@ -280,9 +301,9 @@ export interface ModelLimits {
 }
 
 /**
- * Лимиты модели по id. Для id вне каталога — окно по умолчанию и НАИМЕНЬШИЙ
- * потолок ответа по каталогу: занизить безопаснее, чем пообещать инструменту
- * окно, которого у модели нет (он перестанет вовремя сжимать историю).
+ * Лимиты модели по id. Для id вне каталога — НАИМЕНЬШИЕ по каталогу окно
+ * (OPENCLAW_CONTEXT_WINDOW) и потолок ответа: занизить безопаснее, чем пообещать
+ * инструменту окно, которого у модели нет (он перестанет вовремя сжимать историю).
  */
 export function modelLimits(modelId: string): ModelLimits {
   const spec = OPENCLAW_MODELS.find((m) => m.id === modelId);

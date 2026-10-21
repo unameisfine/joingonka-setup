@@ -5,7 +5,7 @@
  * файл не пишем. Проверяем: resolvePath→null, wrote:false, messages содержат
  * оба base URL (OpenAI С /v1 для основного пути и Anthropic БЕЗ пути для
  * старых версий), модель, ключ и Context window из каталога
- * (пер-модельный 380000 у DeepSeek, общий 200000 у остальных).
+ * (380000 у DeepSeek, 180000 у MiniMax).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readdirSync } from 'node:fs';
@@ -58,9 +58,9 @@ describe('zcodeAdapter', () => {
     expect(joined).toContain('jg-test123');
   });
 
-  it('shows the shared context window (200000) for the default model', async () => {
+  it('shows the context window of MiniMax (180000) for the default model', async () => {
     const result = await zcodeAdapter.apply(input);
-    expect(result.messages.join('\n')).toContain('Context window: 200000');
+    expect(result.messages.join('\n')).toContain('Context window: 180000');
   });
 
   it('shows the per-model context window (380000) for DeepSeek', async () => {

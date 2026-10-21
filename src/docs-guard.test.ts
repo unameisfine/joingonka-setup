@@ -9,6 +9,10 @@
  * адаптер без строки в README роняет сборку релиза (`prepublishOnly` гоняет тесты).
  *
  * Гейт покрывает ВСЕ витрины сразу: README, package.json, CHANGELOG и `--help`.
+ *
+ * Лимиты моделей в README (таблица «## Models» и осторожные значения для модели вне
+ * каталога) сверяются с каталогом constants.ts: в 0.5.0 README обещал MiniMax окно
+ * 200,000 вслед за каталогом, а исправлять число пришлось бы в двух местах руками.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -16,6 +20,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { adapters, toolIds } from './adapters/registry.js';
 import { programDescription, toolOptionDescription } from './cli-text.js';
+import { OPENCLAW_MODELS, modelLimits } from './constants.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (name: string) => readFileSync(resolve(ROOT, name), 'utf-8');
@@ -103,6 +108,42 @@ describe('README', () => {
     for (const [, id] of readme.matchAll(/--tool ([a-z][a-z0-9-]*)/g)) {
       expect(ids, `README mentions --tool ${id}`).toContain(id);
     }
+  });
+});
+
+/** Число так, как его пишет README: с запятыми по тысячам (180000 → «180,000»). */
+const readmeNumber = (value: number): string => String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+/** Строки таблицы «## Models»: id модели → «окно | потолок ответа», как в README. */
+function modelTableRows(): Map<string, string> {
+  const section = readme.split(/^## Models$/m)[1]?.split(/^## /m)[0] ?? '';
+  const rows = new Map<string, string>();
+  for (const line of section.split('\n')) {
+    const cells = line.split('|').map((cell) => cell.trim());
+    // id модели — вторая колонка, всегда `вендор/модель`: заголовок и разделитель под это не подходят.
+    const id = /^`([^`\s]+\/[^`\s]+)`$/.exec(cells[2] ?? '')?.[1];
+    if (id !== undefined) rows.set(id, `${cells[3]} | ${cells[4]}`);
+  }
+  return rows;
+}
+
+describe('README: model limits', () => {
+  it('lists every catalog model with the limits the installer writes — and no others', () => {
+    const rows = modelTableRows();
+    expect([...rows.keys()].sort()).toEqual(OPENCLAW_MODELS.map((m) => m.id).sort());
+    for (const spec of OPENCLAW_MODELS) {
+      expect(rows.get(spec.id), spec.id).toBe(
+        `${readmeNumber(spec.contextWindow)} | ${readmeNumber(spec.maxTokens)}`,
+      );
+    }
+  });
+
+  it('states the conservative limits used for a model outside the catalog', () => {
+    const { contextWindow, maxOutput, known } = modelLimits('vendor/not-in-the-catalog');
+    expect(known).toBe(false);
+    expect(readme).toContain(
+      `conservative limits (${readmeNumber(contextWindow)} context, ${readmeNumber(maxOutput)} output)`,
+    );
   });
 });
 

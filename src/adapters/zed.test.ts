@@ -97,7 +97,7 @@ describe('zedAdapter.apply — provider block', () => {
 
     expect(models).toHaveLength(3);
     // ⚠️ В схеме Zed max_tokens — это контекстное окно, не потолок выдачи
-    expect(byName.get('MiniMaxAI/MiniMax-M2.7')?.max_tokens).toBe(200000);
+    expect(byName.get('MiniMaxAI/MiniMax-M2.7')?.max_tokens).toBe(180000);
     expect(byName.get('MiniMaxAI/MiniMax-M2.7')?.max_output_tokens).toBe(8192);
     expect(byName.get('zai-org/GLM-5.3-Flash')?.max_tokens).toBe(390000);
     expect(byName.get('zai-org/GLM-5.3-Flash')?.max_output_tokens).toBe(8192);

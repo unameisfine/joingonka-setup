@@ -152,7 +152,7 @@ describe('run — model selection', () => {
   it('hermes gets DeepSeek by default: агенту нужен длинный контекст и много раундов', async () => {
     // Пер-инструментный дефолт: у Hermes автономный цикл с длинной историей
     // tool-calling, DeepSeek V4 Flash даёт 380K контекста и потолок ответа 32768
-    // против 200K/8192 у остальных. Прочие инструменты остаются на DEFAULT_MODEL.
+    // (у MiniMax 180K/8192, у GLM 390K/8192). Прочие инструменты остаются на DEFAULT_MODEL.
     process.env.JOINGONKA_API_KEY = 'jg-env-key';
     const deps = makeDeps();
     const result = await run(

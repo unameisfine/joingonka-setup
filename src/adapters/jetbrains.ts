@@ -12,10 +12,10 @@
  *     переключатель «Tool calling» («whether the model supports calling tools
  *     configured through MCP»), Test Connection, Apply. Для OpenAI-совместимых
  *     endpoints модели назначаются вручную в «Models Assignment»: Core features,
- *     Instant helpers, Context window (дефолт 64 000 токенов — втрое меньше самого
- *     короткого окна сети). Там же: «Next edit suggestions» и «Code completion»
- *     НЕ работают на моделях из этого раздела — им нужны FIM/edit-prediction
- *     модели, а чат-модели для этого «not suitable»;
+ *     Instant helpers, Context window (дефолт 64 000 токенов — почти втрое меньше
+ *     самого короткого окна сети, 180 000). Там же: «Next edit suggestions» и
+ *     «Code completion» НЕ работают на моделях из этого раздела — им нужны
+ *     FIM/edit-prediction модели, а чат-модели для этого «not suitable»;
  *   - https://www.jetbrains.com/help/ai-assistant/activate-agents.html
  *     (ред. 04.08.2026), таблица способов активации: Junie — JetBrains AI
  *     «Supported», API key (BYOK) «Not supported».

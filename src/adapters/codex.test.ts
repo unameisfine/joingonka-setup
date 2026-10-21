@@ -142,7 +142,7 @@ describe('codexAdapter.apply — чистая установка', () => {
   });
 
   it.each([
-    [DEFAULT_MODEL, 200000],
+    [DEFAULT_MODEL, 180000],
     [GLM_MODEL, 390000],
   ])('writes the real context window of %s', async (model, window) => {
     await codexAdapter.apply({ ...input, model, modelExplicit: true });
@@ -160,7 +160,7 @@ describe('codexAdapter.apply — чистая установка', () => {
     await codexAdapter.apply({ ...input, model: 'vendor/brand-new', modelExplicit: true });
     const config = readConfig();
     expect(config.model).toBe('vendor/brand-new');
-    expect(config.model_context_window).toBe(200000);
+    expect(config.model_context_window).toBe(180000);
   });
 
   it.skipIf(platform() === 'win32')('writes the file with mode 0o600, also over a wider one', async () => {
@@ -309,7 +309,7 @@ describe('codexAdapter.apply — наш прежний конфиг', () => {
   });
 
   it('switches between two live models of ours without calling the old one retired', async () => {
-    seed(`model = "${DEFAULT_MODEL}"\nmodel_provider = "joingonka"\nmodel_context_window = 200000\n`);
+    seed(`model = "${DEFAULT_MODEL}"\nmodel_provider = "joingonka"\nmodel_context_window = 180000\n`);
     const result = await codexAdapter.apply({ ...input, model: GLM_MODEL, modelExplicit: true });
     const config = readConfig();
     expect(config.model).toBe(GLM_MODEL);
@@ -325,14 +325,24 @@ describe('codexAdapter.apply — наш прежний конфиг', () => {
     const config = readConfig();
     expect(config.model).toBe(DEFAULT_MODEL);
     // Окна не было — ставим реальное для ОСТАВЛЕННОЙ модели, а не для дефолтной.
-    expect(config.model_context_window).toBe(200000);
+    expect(config.model_context_window).toBe(180000);
     expect(result.messages.join('\n')).toContain(DEFAULT_MODEL);
+  });
+
+  it('lowers the 200000 window that 0.5.0 wrote for MiniMax to its real 180000', async () => {
+    // До 0.5.1 установщик писал MiniMax окно 200000, а хосты сети принимают 180000
+    // (вход + ответ вместе): повторный запуск обязан исправить уже записанное.
+    seed(`model = "${DEFAULT_MODEL}"\nmodel_provider = "joingonka"\nmodel_context_window = 200000\n`);
+    const result = await codexAdapter.apply(input);
+    expect(readConfig().model).toBe(DEFAULT_MODEL);
+    expect(readConfig().model_context_window).toBe(180000);
+    expect(result.messages.join('\n')).toContain('model_context_window set to its real 180000 tokens');
   });
 
   it('lowers a window that exceeds the kept model, but respects a smaller one', async () => {
     seed(`model = "${DEFAULT_MODEL}"\nmodel_provider = "joingonka"\nmodel_context_window = 380000\n`);
     await codexAdapter.apply(input);
-    expect(readConfig().model_context_window).toBe(200000);
+    expect(readConfig().model_context_window).toBe(180000);
 
     seed(`model = "${DEFAULT_MODEL}"\nmodel_provider = "joingonka"\nmodel_context_window = 100000\n`);
     await codexAdapter.apply(input);

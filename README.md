@@ -80,7 +80,7 @@ JOINGONKA_API_KEY=jg-your-key npx @joingonka/setup --tool openclaw --non-interac
 
 | Shortcut   | Model id                              | Context window | Max output |
 |------------|---------------------------------------|----------------|------------|
-| `minimax`  | `MiniMaxAI/MiniMax-M2.7`              | 200,000        | 8,192      |
+| `minimax`  | `MiniMaxAI/MiniMax-M2.7`              | 180,000        | 8,192      |
 | `deepseek` | `deepseek-ai/DeepSeek-V4-Flash-0731`  | 380,000        | 32,768     |
 | `glm`      | `zai-org/GLM-5.3-Flash`               | 390,000        | 8,192      |
 
@@ -94,7 +94,7 @@ Details worth knowing:
 - An existing choice is respected where a tool can hold several providers (every tool with a written config except Claude Code and Hermes): if the config already points at another provider or at a current Gonka model, a plain re-run leaves the default alone and tells you how to switch. Two deliberate exceptions — a Codex config that selects no provider at all, and a Qwen Code setup still on the discontinued `qwen-oauth` tier — are explained under [Tool notes](#tool-notes). Claude Code and Hermes have a single model slot, so it is set on every run. An explicit `--model` is always written — and the installer makes sure it takes effect, even where the tool keeps its choice in another file (see [Tool notes](#tool-notes)).
 - **OpenClaw** gets a primary model plus fallbacks (`agents.defaults.model.fallbacks`: GLM, then MiniMax), so a busy model switches the agent over instead of failing it. Your own fallback list is kept — only retired Gonka models are dropped from it.
 - **Claude Code** gets the model pinned (`ANTHROPIC_MODEL` and the `opus` / `sonnet` aliases; `haiku`, used for background tasks, goes to MiniMax) and its real limits declared (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`). Without them Claude Code assumes its own window and stops compacting in time.
-- Models that left the network (`kimi`, `glm-5.2`, `qwen`) are refused **before anything is written**, and so is an unknown shortcut (usually a typo). A full `vendor/model` id the installer does not know is written as given, with a warning — the network may get a model before the installer learns about it. It also goes into the tool's model catalog, with conservative limits (200,000 context, 8,192 output), so that the tool can actually find it.
+- Models that left the network (`kimi`, `glm-5.2`, `qwen`) are refused **before anything is written**, and so is an unknown shortcut (usually a typo). A full `vendor/model` id the installer does not know is written as given, with a warning — the network may get a model before the installer learns about it. It also goes into the tool's model catalog, with conservative limits (180,000 context, 8,192 output), so that the tool can actually find it.
 - Keep passing `--model` for such a model: a later run **without** the flag treats a model outside the installer's catalog as retired and goes back to the default.
 - Re-running the installer also cleans up after retired models: besides refreshing its own model catalog it repoints or removes references to them in fallbacks, per-agent models and `small_model`. References to other providers are never touched.
 
