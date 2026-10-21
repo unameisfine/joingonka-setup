@@ -22,11 +22,20 @@
  *   API Key:      <jg-ключ>
  *   Model:        <точный id, как отдаёт /v1/models>
  *
- * ★ Блок Model Configuration печатаем ОБЯЗАТЕЛЬНО. Дефолты Zoo для кастомной
+ * ★ Лимиты модели печатаем ОБЯЗАТЕЛЬНО. Дефолты Zoo для кастомной
  *   модели (`openAiModelInfoSaneDefaults`) — контекст 128000, картинки включены,
  *   потолок выдачи −1 — не совпадают ни с одной моделью сети: с ними Zoo
  *   сжимает контекст раньше времени (у DeepSeek окно втрое больше) и может
  *   предложить модели изображение, которого она не примет.
+ *
+ * ★ Как выглядит форма (живой прогон Zoo Code 3.82.2, 23.09.2026). Блока с
+ *   заголовком «Model Configuration» в ней НЕТ — он остался от Roo/Cline: поля
+ *   лимитов стоят ниже в той же форме, под пояснением «Configure the capabilities
+ *   and pricing for your custom OpenAI-compatible model», причём Max Output Tokens
+ *   идёт раньше Context Window Size. Поле Model форма заранее заполняет `gpt-4o`
+ *   — человек, вписавший адрес и ключ и не тронувший модель, получает от шлюза
+ *   400 Model "gpt-4o" not found. До 0.5.1 инструкция отправляла искать
+ *   несуществующий блок и про gpt-4o молчала.
  *
  * NB: у Zoo есть авто-импорт — настройка VS Code `zoo-code.autoImportSettingsPath`
  * + JSON-файл конфигурации (наследие `roo-cline.autoImportSettingsPath`). Он
@@ -63,18 +72,21 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
       `  API Key:      ${input.apiKey}`,
       `  Model:        ${input.model}`,
       '',
+      'The form pre-fills Model with gpt-4o — replace it, or the gateway answers',
+      '400 Model "gpt-4o" not found.',
+      '',
       ...(spec
         ? [
-            'Then set the real limits of this model under Model Configuration',
+            'Then set the real limits of this model further down the same form',
             '(the defaults do not fit any Gonka model):',
           ]
         : [
             `${input.model} is not in this installer's catalog — conservative network defaults`,
-            `for Model Configuration (real limits: GET ${BASE_URL_OPENAI}/models):`,
+            `for the limits further down the same form (real limits: GET ${BASE_URL_OPENAI}/models):`,
           ]),
       '',
-      `  Context Window Size: ${contextWindow}`,
       `  Max Output Tokens:   ${maxOutput}`,
+      `  Context Window Size: ${contextWindow}`,
       '  Image Support:       off',
       '',
       'Zoo Code relies on native tool calling only — all our Gonka models support it.',
