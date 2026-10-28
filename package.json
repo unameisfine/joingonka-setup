@@ -1,6 +1,6 @@
 {
   "name": "@joingonka/setup",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "One-command installer to point 25 agentic AI coding tools (Claude Code, Codex CLI, opencode, OpenClaw, Hermes, Pi, omp, Cursor, Cline, Kilo Code, Goose, Crush, Qwen Code, Kimi Code, Factory Droid, Zed, Aider, Copilot BYOK, JetBrains, Zoo Code, MiMo Code, MiniMax Code, ZCode, Continue, Roo) at JoinGonka Gateway — a cheap, OpenAI- and Anthropic-compatible API for decentralized Gonka AI inference",
   "type": "module",
   "bin": {

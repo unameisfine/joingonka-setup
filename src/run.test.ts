@@ -20,6 +20,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { run } from './run.js';
 import type { RunDeps } from './run.js';
+import { verificationReport } from './report.js';
+import { fakeOpencode, noCommands } from './testing/fake-opencode.js';
 
 let tmpDir: string;
 let originalHome: string | undefined;
@@ -55,6 +57,9 @@ function makeDeps(overrides?: Partial<RunDeps>): RunDeps {
   return {
     askTool: vi.fn(async () => 'claude-code'),
     askApiKey: vi.fn(async () => 'jg-from-prompt'),
+    // Внешних программ в тестах оркестратора нет: OpenCode на машине разработчика
+    // не должен влиять на результат.
+    runCommand: noCommands,
     ...overrides,
   };
 }
@@ -191,6 +196,7 @@ describe('run() — модель и область установки (0.4.5)', 
   const deps = (): RunDeps => ({
     askTool: vi.fn(),
     askApiKey: vi.fn().mockResolvedValue('jg-test123'),
+    runCommand: noCommands,
   });
 
   it('stops before writing when the model left the network', async () => {
@@ -229,6 +235,7 @@ describe('run() — живые цены (0.4.5)', () => {
   const deps = (): RunDeps => ({
     askTool: vi.fn(),
     askApiKey: vi.fn().mockResolvedValue('jg-test123'),
+    runCommand: noCommands,
   });
 
   /** fetch, который знает про /api/pricing; всё остальное — заглушка verify. */
@@ -296,6 +303,7 @@ describe('run() — live-проверка идёт по той модели, ч�
   const deps = (): RunDeps => ({
     askTool: vi.fn(),
     askApiKey: vi.fn().mockResolvedValue('jg-test123'),
+    runCommand: noCommands,
   });
 
   // Адаптеры уважают переменные своих инструментов — в тесте их быть не должно,
@@ -380,6 +388,7 @@ describe('run() — сообщения об ошибках берут списо
   const deps = (): RunDeps => ({
     askTool: vi.fn(),
     askApiKey: vi.fn().mockResolvedValue('jg-test123'),
+    runCommand: noCommands,
   });
 
   it('lists every registered tool for an unknown --tool, the new ones included', async () => {
@@ -405,6 +414,7 @@ describe('run() — live-проверка идёт протоколом инст
   const deps = (): RunDeps => ({
     askTool: vi.fn(),
     askApiKey: vi.fn().mockResolvedValue('jg-test123'),
+    runCommand: noCommands,
   });
 
   const ENV_KEYS = ['CODEX_HOME'] as const;
@@ -460,5 +470,66 @@ describe('run() — live-проверка идёт протоколом инст
 
       expect(probes(fetchMock).map((p) => p.url), tool).toEqual([url]);
     }
+  });
+});
+
+describe('run() — OpenCode 2 sees the key, or there is no «✓ Verified» (0.5.2)', () => {
+  // ★ Живая находка 28.10.2026: на чистом OpenCode 2 установщик писал «✓ Verified»
+  // (проверка шла прямо в шлюз), а `opencode run` уходил без ключа. Теперь оркестратор
+  // передаёт адаптеру запуск программ, а итог учитывает, что видит сам OpenCode.
+  const ENV_KEYS = ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'OPENCODE_CONFIG', 'OPENCODE_AUTH_JSON'] as const;
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const key of ENV_KEYS) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  const deps = (runCommand: RunDeps['runCommand']): RunDeps => ({
+    askTool: vi.fn(),
+    askApiKey: vi.fn().mockResolvedValue('jg-test123'),
+    runCommand,
+  });
+  const texts = (outcome: Awaited<ReturnType<typeof run>>) =>
+    verificationReport(outcome.verification, outcome.result.toolCheck).lines.map((line) => line.text);
+
+  it('hands the command runner to the adapter: the key lands in OpenCode 2, and the report says so', async () => {
+    const fake = fakeOpencode();
+
+    const outcome = await run({ tool: 'opencode' }, deps(fake.run));
+
+    expect(fake.state.credentials.map((c) => c.key)).toEqual(['jg-test123']);
+    expect(outcome.result.toolCheck?.status).toBe('ok');
+    expect(texts(outcome).join('\n')).toMatch(/✓ Verified/);
+    expect(texts(outcome).join('\n')).toMatch(/✓ OpenCode 2 sees the key/);
+  });
+
+  it('no «✓ Verified» when OpenCode 2 does not see the key — even though the gateway accepted it', async () => {
+    const fake = fakeOpencode({ failing: { import: 'boom' } });
+
+    const outcome = await run({ tool: 'opencode' }, deps(fake.run));
+
+    expect(outcome.verification?.ok).toBe(true);
+    expect(outcome.result.toolCheck?.status).toBe('missing');
+    const report = verificationReport(outcome.verification, outcome.result.toolCheck);
+    expect(report.lines.some((line) => /✓ Verified/.test(line.text))).toBe(false);
+    expect(report.lines.map((line) => line.text).join('\n')).toContain('`opencode auth login joingonka`');
+  });
+
+  it('OpenCode 1.x: the old path — the gateway check alone decides', async () => {
+    const fake = fakeOpencode({ opencodeVersion: '1.19.4' });
+
+    const outcome = await run({ tool: 'opencode' }, deps(fake.run));
+
+    expect(fake.subcommands()).toEqual([]);
+    expect(outcome.result.toolCheck).toBeUndefined();
+    expect(texts(outcome)).toContain('✓ Verified: the gateway accepted the key, base URL and model.');
   });
 });

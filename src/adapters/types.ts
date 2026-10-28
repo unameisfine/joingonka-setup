@@ -7,6 +7,7 @@
  * инструмента = новый адаптер + запись в registry, без правок оркестратора.
  */
 
+import type { RunCommand } from '../core/commands.js';
 import type { LivePricing } from '../core/pricing.js';
 import type { VerifyApiMode } from '../core/verify.js';
 
@@ -40,6 +41,30 @@ export interface ApplyInput {
    * константу-фолбэк пишет только новой записи.
    */
   pricing?: LivePricing | null;
+  /**
+   * Запуск внешних программ (core/commands.ts). Оркестратор передаёт его всем
+   * адаптерам; пользуется пока только opencode — версия и хранилище ключей
+   * OpenCode 2. Нет поля (адаптер вызван напрямую, тесты) → программы не
+   * запускаются, адаптер ведёт себя так, будто инструмента на машине нет.
+   */
+  runCommand?: RunCommand;
+}
+
+/**
+ * Что видит сам инструмент после записи — проверка его же командой (OpenCode 2:
+ * `opencode auth list`). Нужна там, где прямой запрос в шлюз ничего не говорит о
+ * том, дошёл ли ключ до инструмента.
+ */
+export interface ToolCheck {
+  /**
+   * ok — инструмент видит ключ; missing — НЕ видит: «✓ Verified» печатать нельзя,
+   * нужен шаг `fix`; unknown — проверить нечем (инструмент не найден).
+   */
+  status: 'ok' | 'missing' | 'unknown';
+  /** Что увидели или почему не смогли проверить — для пользователя, без ключа. */
+  detail: string;
+  /** Как исправить руками (при missing и unknown). */
+  fix?: string;
 }
 
 /** Результат apply(): что произошло, для вывода пользователю. */
@@ -52,6 +77,8 @@ export interface ApplyResult {
   wrote: boolean;
   /** Сообщения пользователю (инструкции, подтверждения, заметки). */
   messages: string[];
+  /** Проверка самим инструментом (см. ToolCheck); нет поля — такой проверки у адаптера нет. */
+  toolCheck?: ToolCheck;
 }
 
 /** Адаптер одного инструмента. */

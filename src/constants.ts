@@ -23,6 +23,14 @@ export const BASE_URL = 'https://gate.joingonka.ai';
 export const BASE_URL_OPENAI = 'https://gate.joingonka.ai/v1';
 
 /**
+ * Переменная окружения с ключом для `--non-interactive`. Ключ никогда не берётся
+ * из аргументов CLI (история shell, список процессов), и та же переменная
+ * вычищается из окружения внешних программ, которые запускает установщик
+ * (core/commands.ts).
+ */
+export const API_KEY_ENV = 'JOINGONKA_API_KEY';
+
+/**
  * Модель по умолчанию — MiniMax-M2.7. Активна в сети (operational),
  * нативный tool calling, сильная на агентных задачах.
  */

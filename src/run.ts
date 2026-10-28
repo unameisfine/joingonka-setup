@@ -8,9 +8,12 @@
  *   3a. запросить живые цены, если адаптер пишет их в конфиг;
  *   4. вызвать adapter.apply().
  *
- * Промпты инъектируются через deps — это делает оркестратор полностью
- * тестируемым (spy-функции) и отвязывает его от @inquirer/prompts.
+ * Промпты и запуск внешних программ инъектируются через deps — это делает
+ * оркестратор полностью тестируемым (spy-функции, поддельный CLI OpenCode) и
+ * отвязывает его от @inquirer/prompts и от того, что стоит на машине.
  */
+import { API_KEY_ENV } from './constants.js';
+import type { RunCommand } from './core/commands.js';
 import { validateApiKey } from './core/validate.js';
 import { canonicalModel } from './core/models.js';
 import { getAdapter, localScopeToolIds, toolIds } from './adapters/registry.js';
@@ -32,10 +35,16 @@ export interface RunOptions {
   verify?: boolean;
 }
 
-/** Инъектируемые промпты (в проде — реализации из core/prompt.ts). */
+/** Инъектируемые зависимости (в проде — core/prompt.ts и core/commands.ts). */
 export interface RunDeps {
   askTool: () => Promise<string>;
   askApiKey: () => Promise<string>;
+  /**
+   * Запуск внешних программ — адаптер OpenCode так узнаёт версию и кладёт ключ в
+   * хранилище OpenCode 2. Обязателен, чтобы cli.ts не мог его забыть: без него
+   * OpenCode 2 молча остался бы без ключа.
+   */
+  runCommand: RunCommand;
 }
 
 /** Что вернул запуск — для вывода в CLI. */
@@ -47,9 +56,6 @@ export interface RunOutcome {
   /** Непустое, если модель вне каталога установщика (записали, но предупреждаем). */
   modelWarning?: string;
 }
-
-/** Имя env-переменной с ключом для non-interactive режима. */
-const API_KEY_ENV = 'JOINGONKA_API_KEY';
 
 export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcome> {
   const scope: Scope = options.scope ?? 'user';
@@ -104,11 +110,20 @@ export async function run(options: RunOptions, deps: RunDeps): Promise<RunOutcom
   const pricing = adapter.wantsPricing ? await fetchLivePricing() : undefined;
 
   // 4. Применяем.
-  const result = await adapter.apply({ apiKey, model, scope, modelExplicit, pricing });
+  const result = await adapter.apply({
+    apiKey,
+    model,
+    scope,
+    modelExplicit,
+    pricing,
+    runCommand: deps.runCommand,
+  });
 
   // 5. Live-проверка: реальный запрос к gate записанными ключом+моделью —
   //    подтверждает, что настройка рабочая (ловит мёртвый ключ/URL/модель —
   //    тот класс молчаливого провала, что дал OpenClaw-баг). По умолчанию вкл.
+  //    Видит ли ключ сам инструмент, шлюз не знает: это `result.toolCheck`
+  //    (OpenCode 2), и «✓ Verified» решает report.ts по обоим.
   let verification: VerifyResult | undefined;
   if (options.verify !== false) {
     verification = await verifyConfig({

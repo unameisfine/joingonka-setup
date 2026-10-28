@@ -26,7 +26,7 @@ That's it. The installer asks which tool to set up and for your API key (`jg-...
 |------|----------|--------|----------------------------|---------|---------------|
 | Claude Code | `claude-code` | JSON | `~/.claude/settings.json` (`--scope local`: `.claude/settings.local.json`) — URL, model, context window | in the file, `600` | DeepSeek V4 Flash |
 | Codex CLI | `codex` | TOML | `~/.codex/config.toml` (`CODEX_HOME` honoured) — `[model_providers.joingonka]` over the Responses API, plus `model`, `model_provider`, `model_context_window` | in the file as `experimental_bearer_token`, `600` — see [Codex CLI](#codex-cli) | DeepSeek V4 Flash |
-| opencode | `opencode` | JSON | `opencode.json`, or the existing global config opencode loads last — see [opencode and Kilo Code](#opencode-and-kilo-code) (`XDG_CONFIG_HOME` / `XDG_DATA_HOME` honoured) | native `auth.json`, `600` | DeepSeek V4 Flash |
+| opencode | `opencode` | JSON | `opencode.json`, or the existing global config opencode loads last — see [opencode and Kilo Code](#opencode-and-kilo-code) (`XDG_CONFIG_HOME` / `XDG_DATA_HOME` honoured) | native `auth.json`, `600`; for OpenCode 2 also its own key store — see [OpenCode 2](#opencode-2) | DeepSeek V4 Flash |
 | OpenClaw | `openclaw` | JSON | `~/.openclaw/openclaw.json` — provider, primary model and fallbacks | in the file, `600` | DeepSeek V4 Flash |
 | Hermes | `hermes` | YAML | `~/.hermes/config.yaml`, `%LOCALAPPDATA%\hermes\config.yaml` on Windows | in the file (`model.api_key`), `600` | DeepSeek V4 Flash |
 | Pi | `pi` | JSON | `~/.pi/agent/models.json` + default in `settings.json` (`PI_CODING_AGENT_DIR` honoured) | in the file, `600` | DeepSeek V4 Flash |
@@ -120,6 +120,16 @@ The free `qwen-oauth` tier was discontinued on April 15, 2026, and Qwen Code fal
 
 Both tools read several global config files and merge them; a later file overrides an earlier one. opencode loads `config.json` → `opencode.json` → `opencode.jsonc` (and creates `opencode.jsonc` itself on first start), Kilo Code loads `config.json` → `kilo.json` → `kilo.jsonc` → `opencode.json` → `opencode.jsonc`. The installer writes into the existing file that is loaded last, so that what it writes — an explicit `--model` above all — really takes effect; with no config yet it creates `opencode.json` / `kilo.jsonc`. A model chosen in a lower-priority file is your choice and is kept. If an earlier installer version left its provider block in a lower-priority file, that block is refreshed there too (with a backup): the tools merge model catalogs, so retired models would otherwise come back from the old file. Files with nothing of ours in them are not touched.
 
+### OpenCode 2
+
+OpenCode 2 reads the same config, but keeps API keys in its own store and reads `auth.json` only once — when it upgrades an OpenCode 1.x installation. On a fresh OpenCode 2 a key in `auth.json` never arrives. So when the installer finds OpenCode 2 (`opencode --version` prints `v2.x`, or there is an `opencode2` command), it also hands the key to OpenCode itself:
+
+- `opencode auth import`, with the key passed through stdin — never as a command-line argument. The entry from an earlier run is removed first (`auth import` does not replace it), and the JoinGonka entry becomes the active account. JoinGonka accounts you added yourself are kept.
+- If the OpenCode 2 background service is not running, the commands use a private server (`--standalone`), and no service is left running after the installer. If it is running, it is told to reload the config first.
+- Then the installer asks OpenCode what it sees: `opencode auth list` must show JoinGonka as stored, and `opencode auth export` the key that was just set. Otherwise there is no `✓ Verified` — see [What the live check means](#what-the-live-check-means).
+
+`auth.json` is still written: OpenCode 1.x reads it, and OpenCode 2 picks it up when it upgrades 1.x. If OpenCode is not installed yet, the installer says so; for OpenCode 2, re-run it after installing, or run `opencode auth login joingonka`, choose to enter the API key manually and paste your key. One case is left alone on purpose: `opencode` is still 1.x, OpenCode 2 sits next to it as `opencode2`, and there is no OpenCode database yet — a database that OpenCode 2 creates first stops OpenCode 1.x from starting. The installer says so; re-run it once OpenCode 1.x has been started.
+
 ### GitHub Copilot BYOK
 
 Copilot keeps the key in each client's own store, so nothing is written; `--tool copilot-byok` prints three sections. **VS Code** — the Custom Endpoint provider (works without a GitHub account or a Copilot plan) with a ready-to-paste `"models"` array carrying the real limits. **Copilot CLI** — the `COPILOT_PROVIDER_*` environment variables for the current shell. **JetBrains** — the values for Manage Models → Add Models.
@@ -136,6 +146,11 @@ Every run ends with a real minimal request made with your key, the base URL and 
 - **`✗ Verification FAILED`, exit code 2** — a configuration problem: the key, the model id or the URL was rejected (401, 403, 400, 404 …). The config was written, but it will not work until that is fixed.
 - **`! Could not verify right now`, exit code 0** — the config is fine, the network is not: rate limiting or overload (429), a 5xx or a timeout (each retried, three attempts in total), or an empty balance (402 — the key works, top up first). Check [the status page](https://gate.joingonka.ai/status).
 
+A request to the gateway cannot tell whether the tool itself got the key. For [OpenCode 2](#opencode-2), which keeps keys in its own store, the installer asks OpenCode as well:
+
+- **`✓ OpenCode 2 sees the key`** — `opencode auth list` shows JoinGonka as stored.
+- **`!` and a `Fix:` line instead of `✓ Verified`, exit code 0** — the gateway accepted the key, but OpenCode 2 does not see it yet; the line names the command that fixes it.
+
 Exit code 1 means the setup itself stopped — an unknown tool or model, a config file that cannot be parsed, a missing key — and the message says why.
 
 ## Your config stays yours
@@ -151,7 +166,7 @@ Register at [gate.joingonka.ai/register](https://gate.joingonka.ai/register), ge
 
 ## Security
 
-The API key is never accepted as a command-line argument (it would leak into shell history and the process list). Only the password prompt or the `JOINGONKA_API_KEY` environment variable.
+The API key is never accepted as a command-line argument (it would leak into shell history and the process list). Only the password prompt or the `JOINGONKA_API_KEY` environment variable. The same rule holds for the programs the installer runs itself: OpenCode 2 gets the key through the stdin of `opencode auth import`, and `JOINGONKA_API_KEY` is removed from the environment of every program the installer starts.
 
 The key is written literally into the tool's own config — no `${ENV}` references, which break as soon as the tool starts without that variable — and every file that holds it is set to `600` (owner-only), including Claude Code's `settings.json`. Global `OPENAI_*` / `ANTHROPIC_*` variables are never touched, so your other tools keep working. With `--scope local` the installer adds `.claude/settings.local.json` to the project's `.gitignore`, so the key does not end up in a commit. Two tools keep the key out of their config by design, and the installer follows them: Zed does not read keys from `settings.json`, and Goose keeps provider keys in the system keyring (see [Tool notes](#tool-notes)). For both the installer prints the one remaining step instead of inventing a place for the key.
 

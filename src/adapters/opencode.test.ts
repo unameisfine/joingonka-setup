@@ -11,6 +11,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { opencodeAdapter, opencodePaths } from './opencode.js';
 import { OPENCODE_DEFAULT_MODEL, DEEPSEEK_MODEL, GLM_MODEL } from '../constants.js';
+import type { RunCommand } from '../core/commands.js';
+import { fakeOpencode, noCommands } from '../testing/fake-opencode.js';
 
 // HOME и XDG_* тоже в песочнице: адаптер смотрит на ВСЕ глобальные файлы opencode
 // (в том числе чтобы привести в порядок свой прежний блок в файле ниже по
@@ -516,5 +518,91 @@ describe('opencodeAdapter — какой глобальный файл чита�
     // Выбор пользователя из глобального файла уважаем — свой дефолт поверх не ставим.
     expect(readConfig().model).toBeUndefined();
     expect(read('opencode.jsonc')).toEqual({ model: 'anthropic/claude-opus-5' });
+  });
+});
+
+describe('opencodeAdapter.apply — OpenCode 2 keeps keys in its own store (0.5.2)', () => {
+  // ★ Проверено вживую 28.10.2026 на OpenCode 2.2.0: ключи V2 держит в своей базе
+  // (opencode.db), а auth.json читает один раз — миграцией при обновлении с 1.x. На
+  // чистой V2 после установщика `opencode auth list` молчал о JoinGonka, а запрос
+  // уходил без ключа. Подробности — шапка adapters/opencode-v2.ts.
+  const KEY = 'jg-test123';
+
+  it('imports the key into OpenCode 2 — after the provider is already in the config', async () => {
+    const fake = fakeOpencode();
+    let configAtImport = '';
+    const run: RunCommand = async (command, args, options) => {
+      if (args.join(' ') === 'auth import') configAtImport = readFileSync(configPath, 'utf-8');
+      return fake.run(command, args, options);
+    };
+
+    const result = await opencodeAdapter.apply({ ...input(), runCommand: run });
+
+    expect(JSON.parse(configAtImport).provider.joingonka.options.baseURL).toBe('https://gate.joingonka.ai/v1');
+    expect(fake.state.credentials).toEqual([
+      { id: 'cred_joingonka', label: 'JoinGonka (Gonka)', key: KEY, active: true },
+    ]);
+    expect(result.toolCheck?.status).toBe('ok');
+    expect(result.messages.join('\n')).toMatch(/OpenCode 2/);
+  });
+
+  it('still writes auth.json — for OpenCode 1.x and for a later upgrade to 2', async () => {
+    await opencodeAdapter.apply({ ...input(), runCommand: fakeOpencode().run });
+    expect(readAuth().joingonka).toEqual({ type: 'api', key: KEY });
+  });
+
+  it('never puts the key on a command line', async () => {
+    const fake = fakeOpencode();
+    await opencodeAdapter.apply({ ...input(), runCommand: fake.run });
+    expect(fake.calls.length).toBeGreaterThan(0);
+    for (const call of fake.calls) expect(call.args.join(' ')).not.toContain(KEY);
+  });
+
+  it('OpenCode 1.x: asks for the version only and imports nothing', async () => {
+    const fake = fakeOpencode({ opencodeVersion: '1.19.4' });
+
+    const result = await opencodeAdapter.apply({ ...input(), runCommand: fake.run });
+
+    expect(fake.subcommands()).toEqual([]);
+    expect(result.toolCheck).toBeUndefined();
+    expect(readAuth().joingonka).toEqual({ type: 'api', key: KEY });
+    expect(result.messages.join('\n')).toMatch(/1\.19\.4/);
+  });
+
+  it('OpenCode not installed: writes both files, does not fail, gives the OpenCode 2 hint', async () => {
+    const result = await opencodeAdapter.apply({ ...input(), runCommand: noCommands });
+
+    expect(result.wrote).toBe(true);
+    expect(readConfig().provider.joingonka).toBeTruthy();
+    expect(readAuth().joingonka).toEqual({ type: 'api', key: KEY });
+    expect(result.toolCheck?.status).toBe('unknown');
+    expect(result.toolCheck?.fix).toContain('`opencode auth login joingonka`');
+  });
+
+  it('a failed import is reported in the result, not thrown — the files stay written', async () => {
+    const fake = fakeOpencode({ failing: { import: 'boom' } });
+
+    const result = await opencodeAdapter.apply({ ...input(), runCommand: fake.run });
+
+    expect(result.wrote).toBe(true);
+    expect(readAuth().joingonka).toEqual({ type: 'api', key: KEY });
+    expect(result.toolCheck?.status).toBe('missing');
+  });
+
+  it('a second run with another key replaces it in OpenCode 2 too', async () => {
+    const fake = fakeOpencode();
+    await opencodeAdapter.apply({ ...input(), runCommand: fake.run });
+
+    const result = await opencodeAdapter.apply({ ...input({ apiKey: 'jg-second-key' }), runCommand: fake.run });
+
+    expect(fake.state.credentials.map((c) => c.key)).toEqual(['jg-second-key']);
+    expect(readAuth().joingonka.key).toBe('jg-second-key');
+    expect(result.toolCheck?.status).toBe('ok');
+  });
+
+  it('does not tell OpenCode 2 users that auth.json is "the same as `opencode auth login`"', async () => {
+    // В V2 `auth login` пишет в базу, а не в auth.json — прежняя строка вводила в заблуждение.
+    const result = await opencodeAdapter.apply({ ...input(), runCommand: fakeOpencode().run });
+    expect(result.messages.join('\n')).not.toContain('same as `opencode auth login`');
   });
 });

@@ -8,9 +8,14 @@
  *      (npm-адаптер @ai-sdk/openai-compatible, baseURL С /v1, models с limit).
  *      apiKey в options НЕ пишем — opencode подтягивает ключ из auth.json по
  *      совпадающему provider-id (apiKey опционален, см. docs/providers).
- *   2) ~/.local/share/opencode/auth.json — нативное хранилище ключей opencode:
+ *   2) ~/.local/share/opencode/auth.json — хранилище ключей opencode 1.x:
  *      { "joingonka": { "type": "api", "key": "jg-..." } } — то же, что пишет
- *      `opencode auth login` → Other → <id> → <ключ>.
+ *      `opencode auth login` → Other → <id> → <ключ> в 1.x.
+ *   3) OpenCode 2 держит ключи в своей базе и auth.json читает один раз — миграцией
+ *      при обновлении с 1.x. Если на машине найден OpenCode 2, ключ дополнительно
+ *      кладётся в его хранилище его же командой (`opencode auth import`, ключ через
+ *      stdin) и проверяется по `opencode auth list` — см. opencode-v2.ts. auth.json
+ *      пишем и тогда: его читают 1.x и миграция при будущем обновлении на 2.
  *
  * Почему НЕ через env: opencode читает общие OPENAI_API_KEY / OPENAI_BASE_URL
  * для встроенного openai-провайдера. Перезапись этих переменных в ~/.bashrc /
@@ -96,6 +101,7 @@ import {
   type PathContext,
 } from '../core/paths.js';
 import { opencodeStaleRefEdits, staleRefsNote } from '../core/stale-refs.js';
+import { syncOpencodeKeystore } from './opencode-v2.js';
 import type { Adapter, ApplyInput, ApplyResult, Scope } from './types.js';
 
 /** Права на файлы конфига/ключей — только владелец (rw-------). */
@@ -310,9 +316,15 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     );
   }
 
+  // 4) OpenCode 2 — ключ в его собственное хранилище. Только ПОСЛЕ записи конфига:
+  //    без провайдера в конфиге OpenCode 2 запись не покажет и заменить не даст.
+  //    Не бросает — неудача приходит в toolCheck, файлы уже записаны.
+  const keystore = await syncOpencodeKeystore(input.runCommand, input.apiKey);
+
   const messages = [
     `Configured provider in ${configPath}`,
-    `Stored API key in ${authPath} (opencode native store — same as \`opencode auth login\`)`,
+    `Stored API key in ${authPath} (the key file opencode 1.x reads)`,
+    ...keystore.messages,
     `Base URL: ${BASE_URL_OPENAI}`,
     `Default model: ${plan.model}`,
     ...[staleRefsNote(staleRefs)].filter((line): line is string => line !== null),
@@ -330,6 +342,7 @@ async function apply(input: ApplyInput): Promise<ApplyResult> {
     backupPath: configBackup,
     wrote: true,
     messages,
+    ...(keystore.toolCheck !== undefined ? { toolCheck: keystore.toolCheck } : {}),
   };
 }
 

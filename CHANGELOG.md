@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Dates are npm publish dates (UTC).
 
+## [0.5.2] - 2026-10-28
+
+### Fixed
+
+- **OpenCode 2 now gets the key.** OpenCode 2 keeps API keys in its own store and
+  reads `auth.json` only once, when it upgrades an OpenCode 1.x installation. On a
+  fresh OpenCode 2 the key never arrived: `opencode auth list` showed no JoinGonka,
+  requests went out without a key, and re-running the installer with a new key
+  changed nothing. When the installer finds OpenCode 2 (`opencode --version` prints
+  `v2.x`, or there is an `opencode2` command), it now also stores the key with
+  `opencode auth import` — through stdin, never on the command line — replaces the
+  key of an earlier run and makes it the active JoinGonka account. `auth.json` is
+  still written for OpenCode 1.x. If the OpenCode 2 background service is not
+  running, no service is left running after the installer.
+- **No more false `✓ Verified` for OpenCode 2.** The live check talks to the gateway
+  directly, so it passed while OpenCode 2 had no key. Now the installer also asks
+  OpenCode itself: `opencode auth list` must show JoinGonka as stored. If it does
+  not, you get a warning with the command that fixes it (`opencode auth login
+  joingonka`) instead of `✓ Verified`. If OpenCode is not installed, the installer
+  says so and prints the same step for OpenCode 2.
+
 ## [0.5.1] - 2026-10-22
 
 ### Fixed

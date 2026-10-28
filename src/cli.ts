@@ -15,7 +15,9 @@ import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { run } from './run.js';
 import { programDescription, toolOptionDescription } from './cli-text.js';
+import { runCommand } from './core/commands.js';
 import { askApiKey, askTool } from './core/prompt.js';
+import { verificationReport } from './report.js';
 import type { Scope } from './adapters/types.js';
 
 interface CliOptions {
@@ -65,7 +67,7 @@ program
           nonInteractive: opts.nonInteractive,
           verify: opts.verify,
         },
-        { askTool, askApiKey },
+        { askTool, askApiKey, runCommand },
       );
 
       // Печатаем сообщения адаптера (пути/инструкции/подтверждения)
@@ -80,29 +82,13 @@ program
         console.warn(`! ${modelWarning}`);
       }
 
-      // Результат live-проверки (если не отключена через --no-verify).
-      if (verification) {
-        console.log('');
-        if (verification.ok) {
-          console.log('✓ Verified: the gateway accepted the key, base URL and model.');
-        } else if (verification.outcome === 'unavailable') {
-          // Настройка корректна, занята сеть (или пуст баланс) — это НЕ провал
-          // установки, поэтому выходим с нулевым кодом.
-          console.warn(`! Could not verify right now (${verification.detail}).`);
-          console.warn(
-            '  The config is written and looks correct — this is a temporary ' +
-              'condition on the network side. Check https://gate.joingonka.ai/status',
-          );
-        } else {
-          console.error(`✗ Verification FAILED (${verification.detail}).`);
-          console.error(
-            '  The config was written, but a real request did not succeed — ' +
-              'check the API key and the model id.',
-          );
-          process.exit(2);
-        }
+      // Итог: live-проверка шлюза (если не отключена через --no-verify) и то,
+      // что видит сам инструмент. Правила — в report.ts.
+      const report = verificationReport(verification, result.toolCheck);
+      for (const line of report.lines) {
+        console[line.stream](line.text);
       }
-      process.exit(0);
+      process.exit(report.exitCode);
     } catch (e) {
       // ExitPromptError выбрасывается @inquirer/prompts при Ctrl+C
       if (e instanceof Error && e.name === 'ExitPromptError') {
